@@ -52,7 +52,7 @@ Snow emergencies are called by the city periodicallly and parking is prohibited 
 | Run | Data | Strips in order | Logical indexes |
 |---|---|---|---|
 | A | GPIO27 → 74AHCT125 gate 1 | left (bottom to top), then top (left to right) | 0–89 left, 90–149 top |
-| B | second GPIO (TBD) → gate 2 | bottom (left to right), then right (bottom to top) | 150–209 bottom, 210–299 right |
+| B | GPIO33 → 74AHCT125 gate 2 | bottom (left to right), then right (bottom to top) | 150–209 bottom, 210–299 right |
 
   Both side bars fill upward as the index increases. The top-right corner has no joint: run A's last pixel (right end of the top strip) and run B's last pixel (top of the right strip) are both sealed dead ends there.
 - **Electronics are stored indoors** (Feather, level shifter, 12 V supply). **Two cables** run from the electronics through one hole drilled in the window casing at the lower-left corner, one per run, to the head of run A (bottom of the left strip) and the head of run B (left end of the bottom strip). Each cable carries +12 V, GND, DATA, and BI (tied to GND at the head).
@@ -61,7 +61,7 @@ Snow emergencies are called by the city periodicallly and parking is prohibited 
 
 ```cpp
 FastLED.addLeds<WS2812B, 27, GRB>(leds, 0, 150);       // run A: left + top
-FastLED.addLeds<WS2812B, PIN_B, GRB>(leds, 150, 150);  // run B: bottom + right
+FastLED.addLeds<WS2812B, 33, GRB>(leds, 150, 150);     // run B: bottom + right
 ```
 
 - **Fusing:** fuse each 12 V feed separately (about 2–3 A).
@@ -70,24 +70,28 @@ FastLED.addLeds<WS2812B, PIN_B, GRB>(leds, 150, 150);  // run B: bottom + right
 
 ## 4. System architecture
 
-### 4.1 Block diagram (bench configuration)
+### 4.1 Block diagram (bench configuration, two runs)
 
 ```
   Laptop USB-C ──► ESP32 Feather V2 (3.3 V logic)
-                      │  USB pin (≈5 V)  ──────────────► 74AHCT125 pin 14 (VCC)
+                      │  USB pin (≈5 V) ───────────────► 74AHCT125 pin 14 (VCC)
                       │  GND ──────────────────────────► breadboard − rail ──► 74AHCT125 pin 7
-                      │  GPIO27 (silkscreen "27") ─────► 74AHCT125 pin 2 (1A)
-                                                         74AHCT125 pin 3 (1Y) ─► 470 Ω ─► strip DI (green)
+                      │  GPIO27 ───────────────────────► 74AHCT125 pin 2 (1A)
+                      │  GPIO33 ───────────────────────► 74AHCT125 pin 5 (2A)
+                                                         74AHCT125 pin 3 (1Y) ─► 470 Ω ─► run A DI
+                                                         74AHCT125 pin 6 (2Y) ─► 470 Ω ─► run B DI
 
   12 V wall adapter (barrel → screw-terminal adapter)
-      + screw ─► strip VCC (red) + 1000 µF capacitor (+ leg)
-      − screw ─► strip GND (yellow) + capacitor stripe (− leg) ──► jumper to breadboard − rail
-                                                         strip BI (blue) ─► breadboard − rail (GND)
+      + screw ─► run A VCC + run B VCC + 1000 µF capacitor (+ leg)
+      − screw ─► run A GND + run B GND + capacitor stripe (− leg) ──► jumper to breadboard − rail
+                                                         run A BI, run B BI ─► breadboard − rail (GND)
 ```
+
+The current schematic is `hardware/schematics/street-cleaning-revealed.svg`.
 
 Key principles:
 
-1. **The strip and the Feather are separate power domains with a shared ground.** The 12 V supply powers only the strip. The Feather and the level-shifter chip are powered from USB (5 V).
+1. **The strips and the Feather are separate power domains with a shared ground.** The 12 V supply powers only the strips. The Feather and the level-shifter chip are powered from USB (5 V).
 2. **The 12 V never passes through the breadboard.** Breadboard carries only logic, 5 V for the chip, and ground.
 3. **Level shifting:** the ESP32 outputs 3.3 V logic, while WS2815 expects ~5 V-class logic referenced to a 12 V strip. A 74AHCT125 powered at 5 V shifts the signal up and buffers it.
 
@@ -95,9 +99,9 @@ Key principles:
 
 - **WS2815 (12 V, backup data line):** 12 V roughly halves the current for the same power compared with 5 V strips, which lowers voltage drop on long runs. The backup line (BI) lets the chain keep working if a single pixel dies. It speaks the same single-wire protocol as WS2812B.
 - **ESP32 Feather V2:** WiFi built in, 8 MB flash, 2 MB PSRAM, USB-C, comfortable FastLED support, and the Feather form factor allows a terminal-block FeatherWing for a solder-free permanent install.
-- **74AHCT125N level shifter (DIP-14):** through-hole, breadboard-friendly, inexpensive, and appropriate for a single data line. The "T" in AHCT means its inputs accept TTL-level (3.3 V) signals while running at 5 V.
-- **470 Ω series resistor on the data line:** damps ringing and protects the first pixel.
-- **1000 µF, 25 V electrolytic across the strip's power input:** absorbs inrush. It **must be rated well above 12 V**; an early candidate (4700 µF, 10 V) was correctly rejected as under-rated.
+- **74AHCT125N level shifter (DIP-14):** through-hole, breadboard-friendly, inexpensive, and its four gates cover both data lines with two to spare. The "T" in AHCT means its inputs accept TTL-level (3.3 V) signals while running at 5 V.
+- **470 Ω series resistor on each data line:** damps ringing and protects the first pixel.
+- **1000 µF, 25 V electrolytic across the strips' 12 V feed:** absorbs inrush. It **must be rated well above 12 V**; an early candidate (4700 µF, 10 V) was correctly rejected as under-rated.
 - **0.1 µF ceramic bypass across chip pins 14 and 7:** local supply decoupling. Ceramic, so **no polarity**.
 
 ---
@@ -118,7 +122,7 @@ Key principles:
 
 | Part | Role |
 |---|---|
-| BTF-LIGHTING WS2815 strip, **IP68**, with weatherproof pigtail connector |
+| BTF-LIGHTING WS2815 strip, **IP68**, with weatherproof pigtail connector | The LED strip (one 300-pixel reel, cut into four pieces) |
 | BTF IP65 4-pin extension cables | Extension between connectors / to the controller area |
 | WESIRI JST pigtails | Pigtail leads for connection |
 | 12 V, 2 A wall adapter with barrel-to-screw-terminal adapter | **Bench** power (24 W) |
@@ -130,8 +134,8 @@ Key principles:
 - 12 V → 5 V buck converter (e.g., PlusRoc USB-C type) to feed the Feather/shifter from the 12 V supply.
 - Adafruit Terminal Block Breakout FeatherWing (assembled), so pins are clamped by screws rather than friction fit.
 - ~~Weatherproof enclosure(s)~~ Not needed if electronics remain indoors. Still needed: sealant and strain relief where the two cables pass through the window casing, drip loops, and rated connectors or sealing for the cut strip ends.
-- Mains-side wiring solution for the LPV-150-12's bare AC leads (see §10.2).
-- Mounting: **plastic** channel/clips or isolating tape (see §7.4).
+- Mains-side wiring solution for the LPV-150-12's bare AC leads (see D6 in §7).
+- Mounting: **plastic** channel/clips or isolating tape (see D3 in §7).
 - Fuse(s) on the 12 V feed.
 
 ---
@@ -159,7 +163,7 @@ Orientation: notch **up**; pin 1 at top-left; pins 1–7 run down the left side;
 | 13 | 4OE | GND |
 | 14 | VCC | Feather **USB** pin (≈5 V); 0.1 µF ceramic from pin 14 to pin 7 |
 
-**Planned for run B (not yet wired):** gate 2 carries run B. Pin 4 (2OE) stays on GND; pin 5 (2A) moves from GND to the second data GPIO (pin TBD; any free Feather GPIO); pin 6 (2Y) goes through a second 470 Ω resistor to run B's DI. Gates 3 and 4 stay tied low.
+**Run B wiring (gate 2):** pin 4 (2OE) stays on GND; pin 5 (2A) goes to Feather GPIO33 instead of GND; pin 6 (2Y) goes through a second 470 Ω resistor to run B's DI. Gates 3 and 4 stay tied low. The table above is the original single-run wiring.
 
 ### 6.2 Strip wires (input end)
 
@@ -170,18 +174,18 @@ Orientation: notch **up**; pin 1 at top-left; pins 1–7 run down the left side;
 | Green | DATA (DI) | Via 470 Ω from chip pin 3 |
 | Red | VCC, 12 V | Adapter **+** screw (with capacitor + leg) |
 
-BTF's packaging lists VCC red, GND white, DATA green, BACKUP blue. The pigtail has **yellow where the packaging lists white**. Roles were checked electrically (see §7.2).
+BTF's packaging lists VCC red, GND white, DATA green, BACKUP blue. The pigtail has **yellow where the packaging lists white**. Roles were checked electrically on the bench.
 
 ### 6.3 Feather ESP32 V2 facts
 
 - Chip: ESP32-PICO-V3-02, 8 MB flash, 2 MB PSRAM, USB-C with CH9102F USB-serial.
-- Data pin: **GPIO27**, silkscreen "27" (Adafruit's pinout page lists it as D27, with an analog alias). The sketch uses `#define DATA_PIN 27`.
+- Data pins: **GPIO27** for run A, silkscreen "27" (Adafruit's pinout page lists it as D27, with an analog alias), and **GPIO33** for run B (the pinout page lists it as SS / A9). The sketch defines `DATA_PIN_A` as 27 and `DATA_PIN_B` as 33.
 - Onboard red LED: `LED_BUILTIN` (pin 13).
 - The "USB" pin is the 5 V rail from the USB connector; the board's logic is 3.3 V.
 
 ---
 
-## 8. Rough Project plan
+## 7. Rough Project plan
 
 ### Phase A — Bench step 2: color and programmatic control
 
@@ -202,8 +206,8 @@ Goals: confirm color order, control multiple pixels, and prototype the bar-graph
 Layout and rationale in §3.1.
 
 1. **B1. Cut.** Cut the reel at the marked pads into 90 (left), 90 (right), 60 (top), 60 (bottom). Zero spare pixels, so mark and check each cut before making it.
-2. **B2. Terminate and seal.** Six four-wire terminations are needed on cut ends: pigtail A to the left strip's DI end; the left strip's DO end; the top strip's DI end; pigtail B to the bottom strip's DI end; the bottom strip's DO end; the right strip's DI end. Two dead ends need sealing: the top strip's DO end and the right strip's DO end. The reel's two factory connectors can absorb up to two of these if they mate with the purchased BTF extension cables. Solder versus snap-on connectors is still open (§10.2).
-3. **B3. Wire run B's data path.** Gate 2 of the 74AHCT125 and a second 470 Ω resistor, per §6.1. Choose the second GPIO.
+2. **B2. Terminate and seal.** Six four-wire terminations are needed on cut ends: pigtail A to the left strip's DI end; the left strip's DO end; the top strip's DI end; pigtail B to the bottom strip's DI end; the bottom strip's DO end; the right strip's DI end. Two dead ends need sealing: the top strip's DO end and the right strip's DO end. The reel's two factory connectors can absorb up to two of these if they mate with the purchased BTF extension cables. Solder versus snap-on connectors is still open.
+3. **B3. Wire run B's data path.** Gate 2 of the 74AHCT125 and a second 470 Ω resistor, per §6.1. Run B uses GPIO33.
 4. **B4. Update the sketch.** One 300-element array, two `addLeds` calls (see §3.1).
 5. **B5. Test.** Each run individually, then together. Verify the index map (0–89 left bottom to top, 90–149 top left to right, 150–209 bottom left to right, 210–299 right bottom to top). Confirm each head's BI is on GND. Repeat the full-length voltage measurement per run at the real feed.
 
@@ -232,22 +236,22 @@ Considerations:
 3. **D3. Strip mounting.** Plastic channel or isolating tape (not bare aluminum against the PCB). Plan expansion/contraction and adhesive performance across Massachusetts winters.
 4. **D4. Connections and sealing.** Keep all connectors at weather-protected points; re-seal cut ends; consider drip loops at every cable run.
 5. **D5. Thermal envelope.** The strip is rated −20 to +40 °C. Decide whether to accept the risk in winter extremes or add mitigation.
-6. **D6. Mains wiring.** See §10.2.
+6. **D6. Mains wiring.** The LPV-150-12 has bare flying leads on its AC side; connect them only through an enclosed, strain-relieved connection on a suitably protected circuit. Confirm requirements with local code or an electrician.
 7. **D7. Burn-in.** A multi-day run at deployment brightness on the bench or in place before the final mounting.
 
 ---
 
-## 9. Command and procedure cheat-sheet
+## 8. Command and procedure cheat-sheet
 
 ```sh
-# Shell variables used in the working directory ~/dev/LED-parking/led
+# Run from the project root (the folder containing src/)
 FQBN=esp32:esp32:adafruit_feather_esp32_v2
 PORT=/dev/cu.usbserial-5B1E0633431
 SLOW=$FQBN:UploadSpeed=115200
 
 # Compile and upload
-arduino-cli compile --fqbn $SLOW <sketch_folder>
-arduino-cli upload  --fqbn $SLOW -p $PORT <sketch_folder>
+arduino-cli compile --fqbn $SLOW src/street-cleaning-revealed
+arduino-cli upload  --fqbn $SLOW -p $PORT src/street-cleaning-revealed
 
 # Discover port after plugging in
 ls /dev/cu.*
@@ -266,7 +270,7 @@ ESPTOOL=$(find ~/Library/Arduino15/packages/esp32/tools/esptool_py -type f -name
 
 ---
 
-## 10. Glossary
+## 9. Glossary
 
 - **DI / DO:** Data in / data out on a pixel; data flows in the direction of the arrows printed on the strip.
 - **BI:** Backup data input on WS2815. At the head of a strip, tie it to GND (per forum consensus and what worked here).
@@ -278,7 +282,7 @@ ESPTOOL=$(find ~/Library/Arduino15/packages/esp32/tools/esptool_py -type f -name
 
 ---
 
-## 11. References consulted
+## 10. References consulted
 
 - esptool GitHub issues: [#915](https://github.com/espressif/esptool/issues/915) and [#1019](https://github.com/espressif/esptool/issues/1019); [esptool troubleshooting](https://docs.espressif.com/projects/esptool/en/latest/troubleshooting.html).
 - Adafruit ESP32 Feather V2 product and pinout pages (board facts: chip, flash/PSRAM, pin labels).

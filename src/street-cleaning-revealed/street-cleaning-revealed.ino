@@ -25,7 +25,7 @@
 #include <FastLED.h>
 
 #define DATA_PIN_A 27       // run A: left (90) -> top (60)
-#define DATA_PIN_B 33       // run B: bottom (60) -> right (90); silkscreen "33"
+#define DATA_PIN_B 33       // run B: bottom (60) -> right (90)
 #define RUN_LEN 150
 #define NUM_LEDS (2 * RUN_LEN)
 #define COLOR_ORDER GRB     // verified in A1
@@ -136,7 +136,7 @@ void setup() {
   FastLED.addLeds<WS2812B, DATA_PIN_B, COLOR_ORDER>(leds, RUN_LEN, RUN_LEN);
   FastLED.setBrightness(bright);
   clearAll();
-  Serial.println("multipixel (2 x 150) ready. try: run 10");
+  Serial.println("street-cleaning-revealed (2 x 150) ready. try: run 10");
 }
 
 void loop() {
