@@ -1,0 +1,65 @@
+IP68 Waterproof and Durable. Designed for outdoor use, weatherproof silicone wraps around each LED pixel to keep them well protected and easy to clean. We also upgrade the 4pin connectors to waterproof connectors. Suitable for outdoor use with basic water resistance. However, the connection points must be protected from direct exposure to water.
+Dual-Signal and Individually Addressable. DC5V WS2812 Upgrade, Comes with backup data. Signal break-point continuous transmission. If one pixel is damaged, the following LEDs still work. Addressable RGB IC Chip LED Strip. WS2815 IC Chip RGB SMD LED. 60LED/m 16.4ft. DC12V Individually Addressable. One WS2815 IC controls one LED. 5050 SMD. 256 brightness display and 24-bit color display. No voltage drops. Ultra bright.
+Cuttable and Linkable. Our LED strip is flexible and easy to DIY. Every 1 LED is cuttable. 4 Pin connector on two ends, one is female the other one is male, support end to end connect LED strips in series easily. It comes with screws and clips instead of the self-adhesive back tape. With 4-pin male connector and separated power/ground wires on both ends, which makes it easy to hook up each other and wire up for power.
+Universal Controller Compatibility. Works with WLED, Raspberry Pi, ESP-8266/32. It can use controller like (RB3+SP630E, SP611E, SP608E, SP602E,SP803E) & (DR03W, SP530E, SP511E) music sync. For 16.4FT 60LEDs/m strip, we recommend using DC12V 3A (36W) power supply. Note: Power supply & controller sold separately.
+Versatile Indoor & Outdoor Applications. Home & Decoration – TV backlighting, bedrooms, parties, cars. Commercial & Architectural – LED walls, bars, hotels, advertising boards.
+SMD SPI PWM RGBW RGBCW RGBWW LED STRIP RGB RGBCCT WS2811 WS2812B WS2813 WS2815 SK9822 WS2814 SK6812 WS2805 FCOB COB
+
+LED Type	WS2815 IC RGB LED Strip Light
+IC type	WS2815 IC
+FPCB board color	Black/White
+Input Voltage	DC12V
+Led Quantity	16.4ft 300LEDs / 16.4ft 150LEDs
+Color order	G R B（NOT RGB）
+Waterproof level	IP68 Waterproof can work underwater
+LED Strip Width(IP68)	12mm(include silicone sheathing)
+Operating Temperature	-4℉~104℉（-20℃~+40℃ ）
+Color	Full color 24-bit
+Recommended power supply	DC12V5A (Power supply or controller is not included)
+Length x Width x Height	IP68: 5000mmx12mmx3.85mm
+Wave Length(nm)	Red（620-630） ; Green（515-530） ; Blue（465-475）
+Length	16.4FT
+Double Side Tape	There is no double side tape on IP68
+
+Features & Specs
+Indoor Outdoor Usage	Outdoor
+Additional Features	5050 SMD, Dual-signal, Individually Addressable, WS2815 IC RGB, ‎Dimmable LED
+Light Source Type	LED
+Power Source	Corded Electric
+Light Color	Multicolor
+Controller Type	Voice Control
+Voltage	12 volts
+Wattage	2 watts
+Control Method	App, Voice
+Ingress Protection Code Rating	IP68
+Connectivity Protocol	Bluetooth, Wi-Fi
+Connectivity Technology	Bluetooth, Wi-Fi
+Wireless Communication Technology	Bluetooth, Wi-Fi
+Water Resistance Level	Waterproof
+Additional details
+Material Type	Silicone Rubber
+Item Highlight	Black PCB,(Upgraded WS2812B)Dual Signal Individually Addressable,5050SMD Chasing RGB(No Adapter or Controller)
+
+Style
+Color	Black Pcb
+Theme	Outdoor LED Strip Lighting
+Occasion	Christmas, Halloween, New Year
+Product Style	Modern
+Form Factor	Strip Lights
+Measurements
+Number of Light Sources	300
+Item Weight	14.9 ounces
+Number of Items	1
+Item details
+Brand Name	BTF-LIGHTING
+Model Number	HD-12V-WS2815-60L-B-IP68
+Included Components	1x WS2815 LED Strip Light
+Manufacturer Warranty Description	1 year manufacturer.
+Item Length	199.2 inches
+Unit Count	1 Count
+Manufacturer	ShenZhen BTF-LIGHTING Technology Co., Limited
+Manufacturer Part Number	WS28155M60LB68
+Best Sellers Rank	
+#20,838 in Tools & Home Improvement (See Top 100 in Tools & Home Improvement)
+#200 in LED Strip Lights
+ASIN	B0D8Q3YBW5
