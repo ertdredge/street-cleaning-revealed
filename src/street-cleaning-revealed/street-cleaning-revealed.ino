@@ -33,6 +33,8 @@
 #include <FastLED.h>
 #include <sys/time.h>
 #include <time.h>
+#include <WiFi.h>
+#include "secrets.h"            // const char* WIFI_SSID, WIFI_PASS; add to .gitignore
 
 #define DATA_PIN_A 27       // run A: left (90) -> top (60)
 #define DATA_PIN_B 33       // run B: bottom (60) -> right (90)
@@ -325,13 +327,19 @@ void pollSerial() {
 
 void setup() {
   Serial.begin(115200);
-  setenv("TZ", TZ_EASTERN, 1);
-  tzset();
+
+  WiFi.begin(WIFI_SSID, WIFI_PASS);                      // non-blocking; the renderer keeps running
+  configTzTime("EST5EDT,M3.2.0,M11.1.0", "pool.ntp.org", "time.nist.gov");
+  // Keep handy for testing without wifi
+//  setenv("TZ", TZ_EASTERN, 1);
+//  tzset();
+
   FastLED.addLeds<WS2812B, DATA_PIN_A, COLOR_ORDER>(leds, 0, RUN_LEN);
   FastLED.addLeds<WS2812B, DATA_PIN_B, COLOR_ORDER>(leds, RUN_LEN, RUN_LEN);
   FastLED.setBrightness(bright);
   lastFrameMs = millis();
   Serial.println("street-cleaning-revealed ready. try: time 2026-10-22 16:30");
+
 }
 
 void loop() {
