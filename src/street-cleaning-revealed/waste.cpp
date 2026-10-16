@@ -85,7 +85,15 @@ bool yardWasteWeek(int year, int mon, int sundayMday) {
   long d = dayNumber(year, 11, nthWeekdayDay(year, 11, 0, 2));   // 2nd Sunday in December
   if (s < a) return false;
   if (s <= m) return true;                       // m is a Saturday, so this is every week ending by m
-  if (s < o) return ((s - (m + 1)) / 7) % 2 == 1; // first week after m is trash only, then alternate
+  if (s < o) {
+    // The week containing July 4 (Sunday..Saturday) has no yard waste, and the skipped week does
+    // not advance the alternation: the following week resumes where it left off.
+    long j = dayNumber(year, 6, 4) - weekdayOf(year, 7, 4);   // that week's Sunday
+    if (s == j) return false;
+    long n = (s - (m + 1)) / 7;                  // weeks since the first trash-only week
+    if (s > j) n--;                              // the skipped week is not counted
+    return n % 2 == 1;                           // first week after m is trash only, then alternate
+  }
   if (s < d) return true;
   return false;
 }
