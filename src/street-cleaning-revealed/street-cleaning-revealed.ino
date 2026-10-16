@@ -35,6 +35,7 @@
 #include <time.h>
 #include <WiFi.h>
 #include "secrets.h"            // const char* WIFI_SSID, WIFI_PASS; add to .gitignore
+#include "waste.h"               // holidays and the trash-day state (pure calendar logic)
 
 #define DATA_PIN_A 27       // run A: left (90) -> top (60)
 #define DATA_PIN_B 33       // run B: bottom (60) -> right (90)
@@ -230,7 +231,7 @@ void updateFromClock(bool verbose) {
     int mag = MARCH_MIN_SPEED + (hi - MARCH_THRESHOLD) * (MARCH_MAX_SPEED - MARCH_MIN_SPEED) / (90 - MARCH_THRESHOLD);
     speed = (riskL > riskR) ? mag : -mag;    // left riskier -> march right (positive)
   }
-  CRGB standard = riskColor(45);
+  CRGB standard = wasteCollectionColor(now);
   setTop(standard, speed);
   setBottom(standard, speed);
 
@@ -244,6 +245,19 @@ void updateFromClock(bool verbose) {
     reportSide("left ", endL, now, riskL);
     reportSide("right", endR, now, riskR);
     Serial.printf("top/bottom speed %d\n", speed);
+    const char* why = nullptr;
+    WasteState ws = wasteState(now, &why);
+    Serial.printf("waste: %s%s%s%s\n",
+                  ws == WASTE_PUT_OUT ? "put out now" : ws == WASTE_SKIPPED ? "skipped (holiday)" : "idle",
+                  why ? " [delayed by " : "", why ? why : "", why ? "]" : "");
+  }
+}
+
+CRGB wasteCollectionColor(time_t now) {
+  switch (wasteState(now)) {
+    case WASTE_PUT_OUT: return CRGB(0, 0, 255);   // blue: put the trash out
+    case WASTE_SKIPPED: return riskColor(0);      // green: pickup skipped for a holiday, don't put it out yet
+    default:            return riskColor(45);     // yellow: standard
   }
 }
 
@@ -338,7 +352,7 @@ void setup() {
   Serial.begin(115200);
 
   WiFi.begin(WIFI_SSID, WIFI_PASS);                      // non-blocking; the renderer keeps running
-  configTzTime("EST5EDT,M3.2.0,M11.1.0", "pool.ntp.org", "time.nist.gov");
+  configTzTime(TZ_EASTERN, "pool.ntp.org", "time.nist.gov");
   // Keep handy for testing without wifi
 //  setenv("TZ", TZ_EASTERN, 1);
 //  tzset();
