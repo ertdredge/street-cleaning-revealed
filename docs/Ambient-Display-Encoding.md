@@ -43,12 +43,58 @@ If inches forecast is < 4 then the risk function result is multiplied by $\frac{
 
 ## 2. Top and Bottom
 
-The top and bottom emphasize the information on the left and right static bar graphs and layer in information about trash collection 
+The top and bottom emphasize the information on the left and right static bar graphs and layer in information about trash and yard waste collection. Both strips always show the same color and animation.
 
-- Parking $risk$ > 55 : Animated pixels marching *away* from highest risk side
-  - Speed determined by risk, 55 = slowest, 90 = fastest
-- Standard color = Yellow
-- After 3pm and...
-  - ...trash collected next day, color = Red
-  - ...trash and yard waste collected next day, color = Blue
+### 2.1 Animation
 
+- Parking $risk$ > 55 on either side: animated pixels marching *away* from the highest risk side
+  - Speed determined by the higher risk, 55 = slowest, 90 = fastest
+- Otherwise (including equal risk on both sides) the pattern is frozen
+
+### 2.2 Color
+
+| Color | Meaning |
+|---|---|
+| Yellow | Standard: nothing to put out |
+| Blue | Put out the trash (trash only) |
+| Red | Put out the trash and yard waste |
+| Green | Holiday delay: the regular Wednesday pickup is skipped, don't put it out yet |
+
+### 2.3 Trash collection
+
+Trash is collected on Wednesday mornings.
+
+- **Normal week:** from Tuesday 3pm until Wednesday noon the color is blue (red in a yard waste week, see 2.4); otherwise yellow.
+- **Delayed week:** if any holiday in the table below falls on the Sunday, Monday, Tuesday or Wednesday of the week, pickup moves to Thursday morning:
+  - Tuesday 3pm until Wednesday 3pm: **green**, the regular pickup is skipped
+  - Wednesday 3pm until Thursday noon: blue (red in a yard waste week), time to put it out
+  - otherwise yellow
+
+Weeks run Sunday through Saturday. Holidays are matched by their actual calendar date; "observed" days are not applied, so a holiday on a Friday or Saturday does not delay that week's pickup, and a holiday on a Sunday delays the following Wednesday.
+
+| Holiday | Date |
+|---|---|
+| New Year's Day | January 1 |
+| Martin Luther King Jr. Day | 3rd Monday in January |
+| Presidents' Day | 3rd Monday in February |
+| Patriots' Day | 3rd Monday in April |
+| Memorial Day | last Monday in May |
+| Juneteenth | June 19 |
+| Independence Day | July 4 |
+| Labor Day | 1st Monday in September |
+| Indigenous Peoples' Day | 2nd Monday in October |
+| Veterans Day | November 11 |
+| Christmas Day | December 25 |
+
+NOTE: Thanksgiving Thursday and Friday also delay trash collection in the city, but those days are not relevant for this street that has Wednesday normal pickups.
+
+### 2.4 Yard waste
+
+Yard waste is collected together with trash on the same pickup day, so a yard waste week shows red where a trash-only week shows blue. Which weeks are yard waste weeks:
+
+- **2nd Sunday in April through the 2nd Saturday in May:** every week
+- **After the 2nd Saturday in May until the 2nd Sunday in October:** every other week, starting with a trash-only week (blue), then a yard waste week (red), and so on
+- **2nd Sunday in October until the 2nd Sunday in December:** every week
+- **2nd Sunday in December until the 2nd Sunday in April:** none; trash only (blue)
+
+The alternating weeks count from the 2nd Saturday in May, so which weeks are red shifts from year to year. A holiday delay moves the pickup within its week; it does not change the week's type or the alternation.

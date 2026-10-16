@@ -248,14 +248,16 @@ void updateFromClock(bool verbose) {
     const char* why = nullptr;
     WasteState ws = wasteState(now, &why);
     Serial.printf("waste: %s%s%s%s\n",
-                  ws == WASTE_PUT_OUT ? "put out now" : ws == WASTE_SKIPPED ? "skipped (holiday)" : "idle",
+                  ws == WASTE_PUT_OUT ? "put out now" : ws == WASTE_PUT_OUT_YARD ? "put out now, with yard waste"
+                  : ws == WASTE_SKIPPED ? "skipped (holiday)" : "idle",
                   why ? " [delayed by " : "", why ? why : "", why ? "]" : "");
   }
 }
 
 CRGB wasteCollectionColor(time_t now) {
   switch (wasteState(now)) {
-    case WASTE_PUT_OUT: return CRGB(0, 0, 255);   // blue: put the trash out
+    case WASTE_PUT_OUT:      return CRGB(0, 0, 255);   // blue: put the trash out
+    case WASTE_PUT_OUT_YARD: return riskColor(90);     // red: trash and yard waste
     case WASTE_SKIPPED: return riskColor(0);      // green: pickup skipped for a holiday, don't put it out yet
     default:            return riskColor(45);     // yellow: standard
   }

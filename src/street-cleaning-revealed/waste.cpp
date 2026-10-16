@@ -37,14 +37,29 @@ int daysInMonth(int year, int mon) {
   return dim[mon] + (mon == 1 && leap ? 1 : 0);
 }
 
+// Day of month of the n-th `wday` (0 = Sunday) of the month; mon is 0..11.
+int nthWeekdayDay(int year, int mon, int wday, int n) {
+  int first = weekdayOf(year, mon + 1, 1);
+  return 1 + (wday - first + 7) % 7 + 7 * (n - 1);
+}
+
+// Days since 1970-01-01 for a Gregorian date; mon is 0..11 (Hinnant's days_from_civil).
+long dayNumber(int y, int mon, int d) {
+  int m = mon + 1;
+  y -= (m <= 2);
+  long era = (y >= 0 ? y : y - 399) / 400;
+  long yoe = y - era * 400;
+  long doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + doe - 719468;
+}
+
 int holidayDay(const Holiday& h, int year) {
   switch (h.rule) {
     case HR_FIXED:
       return h.n;
-    case HR_NTH: {
-      int first = weekdayOf(year, h.mon + 1, 1);
-      return 1 + (h.wday - first + 7) % 7 + 7 * (h.n - 1);
-    }
+    case HR_NTH:
+      return nthWeekdayDay(year, h.mon, h.wday, h.n);
     case HR_LAST: {
       int last = daysInMonth(year, h.mon);
       return last - (weekdayOf(year, h.mon + 1, last) - h.wday + 7) % 7;
@@ -62,6 +77,19 @@ const int THU_NOON = 4 * DAY + 12 * 60;
 
 }  // namespace
 
+bool yardWasteWeek(int year, int mon, int sundayMday) {
+  long s = dayNumber(year, mon, sundayMday);
+  long a = dayNumber(year, 3, nthWeekdayDay(year, 3, 0, 2));     // 2nd Sunday in April
+  long m = dayNumber(year, 4, nthWeekdayDay(year, 4, 6, 2));     // 2nd Saturday in May
+  long o = dayNumber(year, 9, nthWeekdayDay(year, 9, 0, 2));     // 2nd Sunday in October
+  long d = dayNumber(year, 11, nthWeekdayDay(year, 11, 0, 2));   // 2nd Sunday in December
+  if (s < a) return false;
+  if (s <= m) return true;                       // m is a Saturday, so this is every week ending by m
+  if (s < o) return ((s - (m + 1)) / 7) % 2 == 1; // first week after m is trash only, then alternate
+  if (s < d) return true;
+  return false;
+}
+
 const char* holidayName(int year, int mon, int mday) {
   for (int i = 0; i < NUM_HOLIDAYS; i++) {
     if (HOLIDAYS[i].mon == mon && holidayDay(HOLIDAYS[i], year) == mday) return HOLIDAYS[i].name;
@@ -75,6 +103,14 @@ WasteState wasteState(time_t now, const char** delayedBy) {
   localtime_r(&now, &lt);
   int m = lt.tm_wday * DAY + lt.tm_hour * 60 + lt.tm_min;   // wall-clock, so DST needs no special case
   if (m < TUE_3PM || m >= THU_NOON) return WASTE_IDLE;
+
+  struct tm sun = lt;                      // this week's Sunday
+  sun.tm_mday -= lt.tm_wday;
+  sun.tm_hour = 12; sun.tm_min = 0; sun.tm_sec = 0;
+  sun.tm_isdst = -1;
+  mktime(&sun);
+  const WasteState putOut = yardWasteWeek(sun.tm_year + 1900, sun.tm_mon, sun.tm_mday)
+                                ? WASTE_PUT_OUT_YARD : WASTE_PUT_OUT;
 
   // Is there a holiday on this week's Sunday, Monday, Tuesday or Wednesday?
   // (mktime normalizes dates that cross a month or year boundary.)
@@ -90,7 +126,7 @@ WasteState wasteState(time_t now, const char** delayedBy) {
 
   if (why) {
     if (delayedBy) *delayedBy = why;
-    return (m < WED_3PM) ? WASTE_SKIPPED : WASTE_PUT_OUT;
+    return (m < WED_3PM) ? WASTE_SKIPPED : putOut;
   }
-  return (m < WED_NOON) ? WASTE_PUT_OUT : WASTE_IDLE;
+  return (m < WED_NOON) ? putOut : WASTE_IDLE;
 }
