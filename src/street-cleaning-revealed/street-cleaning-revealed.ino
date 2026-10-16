@@ -178,7 +178,8 @@ void renderFrame() {
 }
 
 // ---- Clock-driven display -----------------------------------------------------
-bool clockMode = false;
+bool clockMode = true;          // display follows the clock until a manual command
+bool clockRendered = false;     // true once a valid clock has been rendered
 uint32_t lastClockUpdateMs = 0;
 
 void setClock(int Y, int M, int D, int h, int m, int s) {
@@ -206,7 +207,7 @@ void reportSide(const char* name, time_t end, time_t now, int risk) {
 void updateFromClock(bool verbose) {
   time_t now = time(nullptr);
   if (now < CLOCK_VALID_AFTER) {
-    Serial.println("clock not set; use: time YYYY-MM-DD HH:MM");
+    if (verbose) Serial.println("clock not set yet (waiting for NTP, or use: time YYYY-MM-DD HH:MM)");
     return;
   }
   time_t endL = nextCleaningEnd(LEFT_SCHEDULE, now);
@@ -227,6 +228,7 @@ void updateFromClock(bool verbose) {
   setBottom(standard, speed);
 
   clockMode = true;
+  clockRendered = true;
   lastClockUpdateMs = millis();
   if (verbose) {
     char buf[40];
@@ -338,12 +340,19 @@ void setup() {
   FastLED.addLeds<WS2812B, DATA_PIN_B, COLOR_ORDER>(leds, RUN_LEN, RUN_LEN);
   FastLED.setBrightness(bright);
   lastFrameMs = millis();
-  Serial.println("street-cleaning-revealed ready. try: time 2026-10-22 16:30");
+  updateFromClock(true);
+  Serial.println("street-cleaning-reveaLED ready. try: time 2026-10-22 16:30");
 
 }
 
 void loop() {
   pollSerial();
-  if (clockMode && millis() - lastClockUpdateMs >= 60000) updateFromClock(false);
+  // Retry every second until the first valid clock (NTP may take a while after boot),
+  // then refresh once a minute.
+  uint32_t every = clockRendered ? 60000 : 1000;
+  if (clockMode && millis() - lastClockUpdateMs >= every) {
+    lastClockUpdateMs = millis();
+    updateFromClock(false);
+  }
   renderFrame();
 }
