@@ -112,17 +112,23 @@ CRGB riskColor(float x) {
 const Schedule LEFT_SCHEDULE = { 5, 2, 4 };   // 2nd and 4th Fridays
 const Schedule RIGHT_SCHEDULE  = { 4, 1, 3 };   // 1st and 3rd Thursdays
 
-// First cleaning end (noon) strictly after `now`, or 0 if none within 35 days.
+// No street cleaning in January, February or March (tm_mon 0..2). The longest gap this
+// creates is about 111 days (a mid-December cleaning to the first one in April).
+const int FIRST_SEASON_TM_MON = 3;     // April
+const int SEARCH_DAYS = 140;
+
+// First cleaning end (noon) strictly after `now`, or 0 if none within SEARCH_DAYS.
 time_t nextCleaningEnd(const Schedule& s, time_t now) {
   struct tm base;
   localtime_r(&now, &base);
-  for (int d = 0; d <= 35; d++) {
+  for (int d = 0; d <= SEARCH_DAYS; d++) {
     struct tm t = base;
     t.tm_mday += d;
     t.tm_hour = 12; t.tm_min = 0; t.tm_sec = 0;
     t.tm_isdst = -1;
     time_t end = mktime(&t);          // normalizes mday and sets wday
     if (end <= now) continue;
+    if (t.tm_mon < FIRST_SEASON_TM_MON) continue;    // off season
     int nth = (t.tm_mday - 1) / 7 + 1;
     if (t.tm_wday == s.wday && (nth == s.nthA || nth == s.nthB)) return end;
   }
@@ -212,8 +218,9 @@ void updateFromClock(bool verbose) {
   }
   time_t endL = nextCleaningEnd(LEFT_SCHEDULE, now);
   time_t endR = nextCleaningEnd(RIGHT_SCHEDULE, now);
-  int riskL = riskFromHours((int64_t)(endL - now) / 3600.0f);
-  int riskR = riskFromHours((int64_t)(endR - now) / 3600.0f);
+  // end == 0 (nothing found) must read as "far away", not as a huge negative remaining time
+  int riskL = riskFromHours(endL ? (int64_t)(endL - now) / 3600.0f : 504.0f);
+  int riskR = riskFromHours(endR ? (int64_t)(endR - now) / 3600.0f : 504.0f);
   setLeft(riskL, riskColor(riskL));
   setRight(riskR, riskColor(riskR));
 
