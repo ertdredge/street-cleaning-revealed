@@ -25,6 +25,9 @@
 //   time [YYYY-MM-DD HH:MM[:SS]]   set the clock (US Eastern local time), then render the
 //                  display from it; with no argument, render from the current clock.
 //                  Clock mode then re-renders once a minute.
+//   time START END   (two times, each YYYY-MM-DD HH:MM[:SS]) step the clock from START to END
+//                  one hour at a time, one step per second. After each step it renders the
+//                  LEDs and prints the usual `time` report. Any other command stops the sweep.
 //   risk H         print risk and color for H hours remaining (no rendering)
 //   status         print current settings
 //
@@ -189,13 +192,41 @@ bool clockMode = true;          // display follows the clock until a manual comm
 bool clockRendered = false;     // true once a valid clock has been rendered
 uint32_t lastClockUpdateMs = 0;
 
-void setClock(int Y, int M, int D, int h, int m, int s) {
+void setClockTo(time_t t) {
+  struct timeval tv = { t, 0 };
+  settimeofday(&tv, nullptr);
+}
+
+// Parses "YYYY-MM-DD HH:MM[:SS]" (US Eastern local time) at s. Returns the position just
+// past it, or nullptr if it doesn't parse.
+const char* parseDateTime(const char* s, time_t* out) {
+  int Y, M, D, h, m, n = 0, sec = 0;
+  if (sscanf(s, "%d-%d-%d %d:%d%n", &Y, &M, &D, &h, &m, &n) < 5 || n == 0) return nullptr;
+  s += n;
+  int k = 0;
+  if (*s == ':' && sscanf(s, ":%d%n", &sec, &k) == 1) s += k;
   struct tm t = {};
   t.tm_year = Y - 1900; t.tm_mon = M - 1; t.tm_mday = D;
-  t.tm_hour = h; t.tm_min = m; t.tm_sec = s;
+  t.tm_hour = h; t.tm_min = m; t.tm_sec = sec;
   t.tm_isdst = -1;
-  struct timeval tv = { mktime(&t), 0 };
-  settimeofday(&tv, nullptr);
+  *out = mktime(&t);
+  return s;
+}
+
+// Sweep (time START END): the clock steps one hour per second from START through END.
+bool sweepActive = false;
+time_t sweepNext = 0, sweepEnd = 0;
+uint32_t sweepLastMs = 0;
+
+void sweepStep() {
+  sweepLastMs = millis();
+  setClockTo(sweepNext);
+  updateFromClock(true);
+  sweepNext += 3600;
+  if (sweepNext > sweepEnd) {
+    sweepActive = false;
+    Serial.println("sweep done");
+  }
 }
 
 void fmtTime(time_t t, char* buf, size_t n) {
@@ -296,6 +327,7 @@ void handle(String line) {
   String cmd = sp < 0 ? line : line.substring(0, sp);
   String arg = sp < 0 ? "" : line.substring(sp + 1);
   arg.trim();
+  if (cmd != "time" && cmd != "status" && cmd != "risk") sweepActive = false;   // any other command ends a sweep
 
   if (cmd == "left")        { clockMode = false; setLeft(arg.toInt(), current);   Serial.printf("left %d\n", leftBar.n); }
   else if (cmd == "right")  { clockMode = false; setRight(arg.toInt(), current);  Serial.printf("right %d\n", rightBar.n); }
@@ -313,12 +345,27 @@ void handle(String line) {
   }
   else if (cmd == "time") {
     if (arg.length()) {
-      int Y, M, D, h, m, s = 0;
-      if (sscanf(arg.c_str(), "%d-%d-%d %d:%d:%d", &Y, &M, &D, &h, &m, &s) < 5) {
-        Serial.println("usage: time YYYY-MM-DD HH:MM[:SS]   (US Eastern local time)");
+      time_t t1, t2;
+      const char* p = parseDateTime(arg.c_str(), &t1);
+      if (!p) {
+        Serial.println("usage: time [YYYY-MM-DD HH:MM[:SS]] [END]   (US Eastern local time)");
         return;
       }
-      setClock(Y, M, D, h, m, s);
+      while (*p == ' ') p++;
+      if (*p) {                                      // a second time: sweep hour by hour
+        if (!parseDateTime(p, &t2) || t2 < t1) {
+          Serial.println("usage: time START END   (both YYYY-MM-DD HH:MM[:SS], END not before START)");
+          return;
+        }
+        sweepNext = t1;
+        sweepEnd = t2;
+        sweepActive = true;
+        Serial.printf("sweep: %ld hourly steps, one per second; any other command stops it\n",
+                      (long)((t2 - t1) / 3600 + 1));
+        sweepStep();
+        return;
+      }
+      setClockTo(t1);
     }
     updateFromClock(true);
   }
@@ -370,6 +417,7 @@ void setup() {
 
 void loop() {
   pollSerial();
+  if (sweepActive && millis() - sweepLastMs >= 1000) sweepStep();
   // Retry every second until the first valid clock (NTP may take a while after boot),
   // then refresh once a minute.
   uint32_t every = clockRendered ? 60000 : 1000;
