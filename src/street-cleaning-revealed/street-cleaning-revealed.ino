@@ -28,6 +28,9 @@
 //   time START END   (two times, each YYYY-MM-DD HH:MM[:SS]) step the clock from START to END
 //                  one hour at a time, one step per second. After each step it renders the
 //                  LEDs and prints the usual `time` report. Any other command stops the sweep.
+//   test-suite     run the built-in list of test dates in order, one every 3 seconds, printing
+//                  each date and label, rendering the LEDs and printing the usual `time` report.
+//                  Any other command stops it.
 //   risk H         print risk and color for H hours remaining (no rendering)
 //   status         print current settings
 //
@@ -52,7 +55,7 @@
 const uint32_t FRAME_MS = 20;            // render period (50 fps)
 const float ANIM_PERIOD = 6.0f;          // marching pattern repeats every N pixels
 const float ANIM_LIT = 2.0f;             // ...of which this many are lit
-const uint8_t ANIM_DIM_LEVEL = 40;       // brightness (0..255) of the other pixels; 0 = off
+const uint8_t ANIM_DIM_LEVEL = 96;       // brightness (0..255) of the other pixels; 0 = off
 const float ANIM_MAX_PPS = 20.0f;        // pixels per second at speed +-100
 const int MARCH_THRESHOLD = 55;          // risk above this animates top and bottom
 const int MARCH_MIN_SPEED = 10;          // speed at risk = MARCH_THRESHOLD
@@ -74,7 +77,8 @@ CRGB leds[NUM_LEDS];
 // ---- BEGIN TYPES ----
 struct Schedule { int wday; int nthA; int nthB; };   // wday: 0 = Sunday .. 6 = Saturday
 struct Bar   { int n; CRGB color; };
-struct March { CRGB color; int speed; float phase; };
+struct AntColors { CRGB lit; CRGB other; };   // marching pattern: "lit" ants on an "other" background
+struct March { AntColors colors; int speed; float phase; };
 // ---- END TYPES ----
 
 // ---- Layer 1: primitives ------------------------------------------------------
@@ -143,12 +147,17 @@ time_t nextCleaningEnd(const Schedule& s, time_t now) {
 // ---- Layer 2: setters (state only) --------------------------------------------
 
 Bar leftBar = {0, CRGB::Black}, rightBar = {0, CRGB::Black};
-March topMarch = {CRGB::Black, 0, 0.0f}, bottomMarch = {CRGB::Black, 0, 0.0f};
+March topMarch = {{CRGB::Black, CRGB::Black}, 0, 0.0f}, bottomMarch = {{CRGB::Black, CRGB::Black}, 0, 0.0f};
 
 void setLeft(int n, CRGB c)  { leftBar  = { constrain(n, 0, (int)STRIP_LEFT.len),  c }; }
 void setRight(int n, CRGB c) { rightBar = { constrain(n, 0, (int)STRIP_RIGHT.len), c }; }
-void setTop(CRGB c, int speed)    { topMarch.color    = c; topMarch.speed    = constrain(speed, -100, 100); }
-void setBottom(CRGB c, int speed) { bottomMarch.color = c; bottomMarch.speed = constrain(speed, -100, 100); }
+// One color: the other pixels are the same color, dimmed to ANIM_DIM_LEVEL.
+AntColors antsOf(CRGB c) { CRGB dim = c; dim.nscale8_video(ANIM_DIM_LEVEL); return { c, dim }; }
+
+void setTop(const AntColors& a, int speed)    { topMarch.colors    = a; topMarch.speed    = constrain(speed, -100, 100); }
+void setBottom(const AntColors& a, int speed) { bottomMarch.colors = a; bottomMarch.speed = constrain(speed, -100, 100); }
+void setTop(CRGB c, int speed)    { setTop(antsOf(c), speed); }
+void setBottom(CRGB c, int speed) { setBottom(antsOf(c), speed); }
 
 // ---- Layer 3: renderer --------------------------------------------------------
 uint32_t lastFrameMs = 0;
@@ -164,12 +173,10 @@ void advance(March& m, float dt) {
 }
 
 void drawMarch(const Strip& s, const March& m) {
-  CRGB dim = m.color;
-  dim.nscale8_video(ANIM_DIM_LEVEL);
   for (int i = 0; i < s.len; i++) {
     float pos = fmodf(i - m.phase, ANIM_PERIOD);
     if (pos < 0) pos += ANIM_PERIOD;
-    px(s, i) = (pos < ANIM_LIT) ? m.color : dim;
+    px(s, i) = (pos < ANIM_LIT) ? m.colors.lit : m.colors.other;
   }
 }
 
@@ -229,6 +236,47 @@ void sweepStep() {
   }
 }
 
+// Test suite (test-suite): a fixed list of dates, one every 6 seconds.
+struct TestCase { const char* when; const char* label; };   // when: YYYY-MM-DD HH:MM, US Eastern
+const TestCase TEST_SUITE[] = {
+  { "2026-10-02 18:00", "unremarkable" },
+  { "2026-09-08 15:00", "trash delayed by holiday" },
+  { "2026-10-06 15:00", "trash night" },
+  { "2026-10-27 18:00", "yard waste" },
+  { "2026-10-22 20:00", "street cleaning left" },
+  { "2026-09-30 20:00", "street cleaning right" },
+  { "2026-10-14 18:00", "yard waste and street cleaning" },
+  { "2026-09-10 11:00", "trash collection and street cleaning" },
+  { "2026-05-06 18:00", "street cleaning imminent both sides" },
+  { "2026-10-23 18:00", "street cleaning left very far away" },
+};
+const int NUM_TESTS = sizeof(TEST_SUITE) / sizeof(TEST_SUITE[0]);
+const uint32_t SUITE_STEP_MS = 6000;
+
+bool suiteActive = false;
+int suiteIndex = 0;
+uint32_t suiteLastMs = 0;
+
+void suiteStep() {
+  suiteLastMs = millis();
+  if (suiteIndex >= NUM_TESTS) {          // the last case has been shown for its full time
+    suiteActive = false;
+    Serial.println("\ntest-suite done");
+    return;
+  }
+  const TestCase& t = TEST_SUITE[suiteIndex];
+  time_t when;
+  if (!parseDateTime(t.when, &when)) {
+    Serial.printf("test-suite: bad date '%s'\n", t.when);
+    suiteActive = false;
+    return;
+  }
+  Serial.printf("\n=== test-suite %d/%d: %s  %s ===\n", suiteIndex + 1, NUM_TESTS, t.when, t.label);
+  setClockTo(when);
+  updateFromClock(true);
+  suiteIndex++;
+}
+
 void fmtTime(time_t t, char* buf, size_t n) {
   struct tm tmv;
   localtime_r(&t, &tmv);
@@ -256,15 +304,15 @@ void updateFromClock(bool verbose) {
   setLeft(riskL, riskColor(riskL));
   setRight(riskR, riskColor(riskR));
 
-  // Top and bottom: standard yellow; above the threshold, march away from the riskier side.
+  // Top and bottom: waste color (white when nothing to put out); above the threshold, march away from the riskier side.
   int hi = max(riskL, riskR), speed = 0;
   if (hi > MARCH_THRESHOLD && riskL != riskR) {
     int mag = MARCH_MIN_SPEED + (hi - MARCH_THRESHOLD) * (MARCH_MAX_SPEED - MARCH_MIN_SPEED) / (90 - MARCH_THRESHOLD);
     speed = (riskL > riskR) ? mag : -mag;    // left riskier -> march right (positive)
   }
-  CRGB standard = wasteCollectionColor(now);
-  setTop(standard, speed);
-  setBottom(standard, speed);
+  AntColors waste = wasteCollectionColors(now);
+  setTop(waste, speed);
+  setBottom(waste, speed);
 
   clockMode = true;
   clockRendered = true;
@@ -285,12 +333,23 @@ void updateFromClock(bool verbose) {
   }
 }
 
-CRGB wasteCollectionColor(time_t now) {
+// Waste colors for the top and bottom strips. Luminance-matched to the parking ramp
+// (Y = 0.2126) and chosen to avoid every hue the left/right ramp uses (118 deg green
+// through amber to 0 deg red), so nothing on top/bottom reads as parking.
+const CRGB WASTE_COLOR_TRASH    = CRGB(  0,  50, 252);   // azure (hue 228): put the trash out
+const CRGB WASTE_COLOR_YARD     = CRGB(  0,  50, 252);   // azure (hue 228): trash and yard waste, the ants
+const CRGB WASTE_COLOR_YARD_ALT = CRGB(  0,  72,  36);   // spring green (hue 150): yard waste, the background between the ants
+const CRGB WASTE_COLOR_SKIPPED  = CRGB( 90,  35,  60);   // pink: holiday delay, don't put it out yet
+const CRGB WASTE_COLOR_STANDARD = CRGB( 54,  54,  54);   // white: nothing to put out
+
+// Colors of the top/bottom pattern. Most states are one color (the ants dimmed in between);
+// yard waste alternates between two colors, since you put out trash AND yard waste.
+AntColors wasteCollectionColors(time_t now) {
   switch (wasteState(now)) {
-    case WASTE_PUT_OUT:      return CRGB(0, 0, 255);   // blue: put the trash out
-    case WASTE_PUT_OUT_YARD: return riskColor(90);     // red: trash and yard waste
-    case WASTE_SKIPPED: return riskColor(0);      // green: pickup skipped for a holiday, don't put it out yet
-    default:            return riskColor(45);     // yellow: standard
+    case WASTE_PUT_OUT:      return antsOf(WASTE_COLOR_TRASH);
+    case WASTE_PUT_OUT_YARD: return { WASTE_COLOR_YARD, WASTE_COLOR_YARD_ALT };
+    case WASTE_SKIPPED:      return antsOf(WASTE_COLOR_SKIPPED);
+    default:                 return antsOf(WASTE_COLOR_STANDARD);
   }
 }
 
@@ -327,7 +386,7 @@ void handle(String line) {
   String cmd = sp < 0 ? line : line.substring(0, sp);
   String arg = sp < 0 ? "" : line.substring(sp + 1);
   arg.trim();
-  if (cmd != "time" && cmd != "status" && cmd != "risk") sweepActive = false;   // any other command ends a sweep
+  if (cmd != "status" && cmd != "risk") { sweepActive = false; suiteActive = false; }   // any other command ends a sweep or test suite
 
   if (cmd == "left")        { clockMode = false; setLeft(arg.toInt(), current);   Serial.printf("left %d\n", leftBar.n); }
   else if (cmd == "right")  { clockMode = false; setRight(arg.toInt(), current);  Serial.printf("right %d\n", rightBar.n); }
@@ -369,6 +428,13 @@ void handle(String line) {
     }
     updateFromClock(true);
   }
+  else if (cmd == "test-suite") {
+    suiteIndex = 0;
+    suiteActive = true;
+    Serial.printf("test-suite: %d cases, one every %lu s; any other command stops it\n",
+                  NUM_TESTS, (unsigned long)(SUITE_STEP_MS / 1000));
+    suiteStep();
+  }
   else if (cmd == "risk") {
     float r = arg.toFloat();
     int k = riskFromHours(r);
@@ -381,7 +447,7 @@ void handle(String line) {
                   topMarch.speed, bottomMarch.speed, clockMode ? "on" : "off",
                   RUN_LEN, DATA_PIN_A, DATA_PIN_B);
   }
-  else Serial.println("commands: left N | right N | top S | bottom S | color X | bright B | off | time [YYYY-MM-DD HH:MM] | risk H | status");
+  else Serial.println("commands: left N | right N | top S | bottom S | color X | bright B | off | time [YYYY-MM-DD HH:MM] | test-suite | risk H | status");
 }
 
 String inbuf;
@@ -418,6 +484,7 @@ void setup() {
 void loop() {
   pollSerial();
   if (sweepActive && millis() - sweepLastMs >= 1000) sweepStep();
+  if (suiteActive && millis() - suiteLastMs >= SUITE_STEP_MS) suiteStep();
   // Retry every second until the first valid clock (NTP may take a while after boot),
   // then refresh once a minute.
   uint32_t every = clockRendered ? 60000 : 1000;

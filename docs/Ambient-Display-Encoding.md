@@ -53,22 +53,26 @@ The top and bottom emphasize the information on the left and right static bar gr
 
 ### 2.2 Color
 
-| Color | Meaning |
-|---|---|
-| Yellow | Standard: nothing to put out |
-| Blue | Put out the trash (trash only) |
-| Red | Put out the trash and yard waste |
-| Green | Holiday delay: the regular Wednesday pickup is skipped, don't put it out yet |
+| Color | Meaning | RGB |
+|---|---|---|
+| White | Standard: nothing to put out | 54, 54, 54 |
+| Azure | Put out the trash (trash only) | 0, 50, 252 |
+| Azure and spring green | Put out the trash and yard waste (azure ants on a spring green background) | 0, 50, 252 and 0, 72, 36 |
+| Pink | Holiday delay: the regular Wednesday pickup is skipped, don't put it out yet | 90, 35, 60 |
+
+Red, green and yellow mean "don't" and "safe" and are reserved for parking on the left and right bar graphs, so the top and bottom never reuse them. The colors here avoid every hue the bar graphs use (green at 118° through amber to red at 0°). Azure is pure blue plus a little green, which gives it a bit more brightness than pure blue would have.
+
+The top and bottom show a pattern of "ants" (2 lit pixels out of every 6) on a background. For white, azure and pink the background is the same color dimmed. For yard waste the ants are azure, the same color as a trash-only week, on a spring green background, because trash and yard waste both go out. The earlier pairing of two close greens that differed only slightly in hue was too hard to see marching. The new pair differs in both hue (228° against 150°) and brightness (azure is roughly twice as bright), which makes the ants easy to pick out.
 
 ### 2.3 Trash collection
 
 Trash is collected on Wednesday mornings.
 
-- **Normal week:** from Tuesday 3pm until Wednesday noon the color is blue (red in a yard waste week, see 2.4); otherwise yellow.
+- **Normal week:** from Tuesday 3pm until Wednesday noon the color is azure (azure ants on spring green in a yard waste week, see 2.4); otherwise white.
 - **Delayed week:** if any holiday in the table below falls on the Sunday, Monday, Tuesday or Wednesday of the week, pickup moves to Thursday morning:
-  - Tuesday 3pm until Wednesday 3pm: **green**, the regular pickup is skipped
-  - Wednesday 3pm until Thursday noon: blue (red in a yard waste week), time to put it out
-  - otherwise yellow
+  - Tuesday 3pm until Wednesday 3pm: **pink**, the regular pickup is skipped
+  - Wednesday 3pm until Thursday noon: azure (azure ants on spring green in a yard waste week), time to put it out
+  - otherwise white
 
 Weeks run Sunday through Saturday. Holidays are matched by their actual calendar date; "observed" days are not applied, so a holiday on a Friday or Saturday does not delay that week's pickup, and a holiday on a Sunday delays the following Wednesday.
 
@@ -90,11 +94,11 @@ NOTE: Thanksgiving Thursday and Friday also delay trash collection in the city, 
 
 ### 2.4 Yard waste
 
-Yard waste is collected together with trash on the same pickup day, so a yard waste week shows red where a trash-only week shows blue. Which weeks are yard waste weeks:
+Yard waste is collected together with trash on the same pickup day, so a yard waste week shows azure ants on a spring green background where a trash-only week shows azure ants on a dimmed azure background. Which weeks are yard waste weeks:
 
 - **2nd Sunday in April through the 2nd Saturday in May:** every week
-- **After the 2nd Saturday in May until the 2nd Sunday in October:** every other week, starting with a trash-only week (blue), then a yard waste week (red), and so on
+- **After the 2nd Saturday in May until the 2nd Sunday in October:** every other week, starting with a trash-only week (azure), then a yard waste week (azure ants on spring green), and so on, except that no yard waste is collected during the week of Independence Day (the Sunday-to-Saturday week containing July 4). That week is trash only, and the following week resumes the alternation where it left off, so the skipped week does not count
 - **2nd Sunday in October until the 2nd Sunday in December:** every week
-- **2nd Sunday in December until the 2nd Sunday in April:** none; trash only (blue)
+- **2nd Sunday in December until the 2nd Sunday in April:** none; trash only (azure)
 
-The alternating weeks count from the 2nd Saturday in May, so which weeks are red shifts from year to year. A holiday delay moves the pickup within its week; it does not change the week's type or the alternation.
+The alternating weeks count from the 2nd Saturday in May, so which weeks have yard waste shifts from year to year. A holiday delay moves the pickup within its week; it does not change the week's type or the alternation.
