@@ -4,7 +4,7 @@
 
 ## 1. Purpose and one-paragraph summary
 
-Year-round outdoor LED art installation that frames a window of roughly **105 cm × 160 cm**. The top and bottom strips are a fixed color then eventually an animated pattern. The **two side strips act as bar graphs** whose displayed value ranges over **0–21** and is **updated once a day**, with colors that can be changed and values calculated from calendar dates. Control is by an **ESP32 microcontroller running FastLED**. In a later phase the controller will use **WiFi and HTTPS** to monitor a web page for keywords and augment the 0–21 values with information gleaned from there.
+Outdoor LED art installation that frames a window of roughly **38.5" x 60"*. The top and bottom strips animate to urge parallel parked cars to the safe side of the street when street cleaning is imminent, and change color based on trash collection or yard waste collection. The **two side strips act as bar graphs** whose displayed value ranges over **0–90** and is **updated hourly**, with colors and values that reflect how risky it is to park on that side of the street. Control is by an **ESP32 microcontroller running FastLED**. In a later phase the controller will use **WiFi and HTTPS** to monitor a web page for keywords and augment the 0–21 values with information gleaned from there.
 
 ---
 
@@ -15,8 +15,8 @@ Year-round outdoor LED art installation that frames a window of roughly **105 cm
 | Requirement | Detail |
 |---|---|
 | Geometry | Frame a window ~105 cm wide × ~160 cm tall. Perimeter ≈ 2 × (105 + 160) = **530 cm**. A single ~5 m reel is "slightly too short" for the full 530 cm |
-| Top and bottom | Fixed color then eventually an animated pattern. |
-| Sides | Bar graphs, values 0–21, updated once per day, colors changeable. |
+| Top and bottom | Animate for parking and color for waste collection. |
+| Sides | Bar graphs, values 0–90, updated hourly. |
 | Firmware | FastLED on ESP32. |
 | Later connectivity | WiFi + HTTPS to watch a web page for keywords and influence the bar values. |
 
@@ -39,7 +39,7 @@ These were deliberately relaxed from an early "visible at 150 m in daylight" ide
 
 The project will illustrate the number of days remaining to a biweekly street cleaning event on the two sides of a street.  One side is second and fourth Fridays, the other side is first and third Thursdays.  Number of days until the next street sweeping event will be calculated and used as the basis for which LEDs are illuminated.
 
-Trash and yard waste collection is every Wednesday on this street unless delayed to Thursday by a holliday.  Eventually this information will be incorporated into the display.
+Trash and yard waste collection is every Wednesday on this street unless delayed to Thursday by a holliday.
 
 Snow emergencies are called by the city periodicallly and parking is prohibited on one side of the street or the other.  Evenutally this information will be retrieved from the internet and incorporated into the display.
 
@@ -195,9 +195,9 @@ Goals: confirm color order, control multiple pixels, and prototype the bar-graph
 2. ✅ **A2. Unroll and lay out — COMPLETE (2026-10-11).** Lay the strip out flat (or in wide, open serpentine runs with spacing). Keep brightness 32–64.
 3. ✅ **A3. Multiple pixels — COMPLETE (2026-10-11).** Light a run of N pixels; verify addressing along the strip and that the far end is reachable. Measure the supply voltage at the strip input under a representative load.
 4. ✅ **A4. Count and density — COMPLETE (2026-10-11).** Determine the actual LED count and density (LEDs per meter) from the order and by counting; replace the placeholder `NUM_LEDS 300`.
-5. **A5. Bar-graph function.** Write `show_bar(value, color)` for 0–21, deciding how 21 levels map onto a 90-pixel side strip (about 4.3 pixels per step; pixels per step, partial steps, "off" color). Handle clamping and color changes. Test on a section of the uncut strip.
-6. **A6. Input via serial.** Accept a value from the serial monitor (or a shell/Ruby script over serial) so the bar can be changed without reflashing.
-7. **A7. Power check.** Estimate worst-case current for the chosen color scheme and confirm it fits the 2 A bench adapter.
+5. ✅ **A5. Bar-graph function.** Write `show_bar(value, color)` for 0–21, deciding how 21 levels map onto a 90-pixel side strip (about 4.3 pixels per step; pixels per step, partial steps, "off" color). Handle clamping and color changes. Test on a section of the uncut strip.
+6. ✅ **A6. Input via serial.** Accept a value from the serial monitor (or a shell/Ruby script over serial) so the bar can be changed without reflashing.
+7. ✅ **A7. Power check.** Estimate worst-case current for the chosen color scheme and confirm it fits the 2 A bench adapter.
 
 *Exit criteria:* correct colors; a bar that fills 0–21 predictably; no heat or voltage problems at the chosen brightness.
 
@@ -205,11 +205,11 @@ Goals: confirm color order, control multiple pixels, and prototype the bar-graph
 
 Layout and rationale in §3.1.
 
-1. **B1. Cut.** Cut the reel at the marked pads into 90 (left), 90 (right), 60 (top), 60 (bottom). Zero spare pixels, so mark and check each cut before making it.
-2. **B2. Terminate and seal.** Six four-wire terminations are needed on cut ends: pigtail A to the left strip's DI end; the left strip's DO end; the top strip's DI end; pigtail B to the bottom strip's DI end; the bottom strip's DO end; the right strip's DI end. Two dead ends need sealing: the top strip's DO end and the right strip's DO end. The reel's two factory connectors can absorb up to two of these if they mate with the purchased BTF extension cables. Solder versus snap-on connectors is still open.
-3. **B3. Wire run B's data path.** Gate 2 of the 74AHCT125 and a second 470 Ω resistor, per §6.1. Run B uses GPIO33.
-4. **B4. Update the sketch.** One 300-element array, two `addLeds` calls (see §3.1).
-5. **B5. Test.** Each run individually, then together. Verify the index map (0–89 left bottom to top, 90–149 top left to right, 150–209 bottom left to right, 210–299 right bottom to top). Confirm each head's BI is on GND. Repeat the full-length voltage measurement per run at the real feed.
+1. ✅ **B1. Cut.** Cut the reel at the marked pads into 90 (left), 90 (right), 60 (top), 60 (bottom). Zero spare pixels, so mark and check each cut before making it.
+2. ✅ **B2. Terminate and seal.** Six four-wire terminations are needed on cut ends: pigtail A to the left strip's DI end; the left strip's DO end; the top strip's DI end; pigtail B to the bottom strip's DI end; the bottom strip's DO end; the right strip's DI end. Two dead ends need sealing: the top strip's DO end and the right strip's DO end. The reel's two factory connectors can absorb up to two of these if they mate with the purchased BTF extension cables. Solder versus snap-on connectors is still open.
+3. ✅ **B3. Wire run B's data path.** Gate 2 of the 74AHCT125 and a second 470 Ω resistor, per §6.1. Run B uses GPIO33.
+4. ✅ **B4. Update the sketch.** One 300-element array, two `addLeds` calls (see §3.1).
+5. ✅ **B5. Test.** Each run individually, then together. Verify the index map (0–89 left bottom to top, 90–149 top left to right, 150–209 bottom left to right, 210–299 right bottom to top). Confirm each head's BI is on GND. Repeat the full-length voltage measurement per run at the real feed.
 
 Considerations:
 
@@ -221,13 +221,12 @@ Considerations:
 
 ### Phase C — Network and daily update logic
 
-1. **C1. WiFi bring-up.** Connect the ESP32 to WiFi; keep credentials out of version control (e.g., a git-ignored `secrets.h`).
-2. **C2. Time.** Use NTP so the "once per day" schedule is meaningful; handle timezone (America/New_York) and DST.
+1. ✅ **C1. WiFi bring-up.** Connect the ESP32 to WiFi.
+2. ✅ **C2. Time.** Use NTP so the "once per day" schedule is meaningful; handle timezone (America/New_York) and DST.
 3. **C3. HTTPS fetch.** Use `WiFiClientSecure` with proper certificate validation (a root CA bundle or pinned certificate), not `setInsecure()`. Note that TLS roots expire; plan for updating them.
 4. **C4. Keyword parse.** Define keyword/page signal.
-5. **C5. Daily scheduling.** Decide between staying awake and using deep sleep for a once-daily wake. If the device is on the 12 V-derived 5 V supply continuously, staying awake is simpler and not a significant power cost.
-6. **C6. Persistence.** Store the last good value in NVS flash so a power loss does not lose state.
-7. **C7. Observability.** An easy way to see last-update time and last value (serial log, a status LED pattern, or a trivial web endpoint).
+6. **C5. Persistence.** Store the last good value in NVS flash so a power loss does not lose state.
+7. **C6. Observability.** An easy way to see last-update time and last value (serial log, a status LED pattern, or a trivial web endpoint).
 
 ### Phase D — Deployment design
 
