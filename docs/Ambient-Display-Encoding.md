@@ -60,9 +60,9 @@ The top and bottom emphasize the information on the left and right static bar gr
 | Azure and spring green | Put out the trash and yard waste (azure ants on a spring green background) | 0, 50, 252 and 0, 72, 36 |
 | Pink | Holiday delay: the regular Wednesday pickup is skipped, don't put it out yet | 90, 35, 60 |
 
-Red, green and yellow mean "don't" and "safe" and are reserved for parking on the left and right bar graphs, so the top and bottom never reuse them. The colors here avoid every hue the bar graphs use (green at 118° through amber to red at 0°). Azure is pure blue plus a little green, which gives it a bit more brightness than pure blue would have.
+Red, green and yellow mean "don't" and "safe" and are reserved for parking on the left and right bar graphs, so the top and bottom never reuse them. The colors here avoid every hue the bar graphs use (green at 118° through amber to red at 0°). All four are luminance-matched to the bar graph colors so no state looks brighter than another. Azure is pure blue plus a little green: pure blue can't reach the same luminance.
 
-The top and bottom show a pattern of "ants" (2 lit pixels out of every 6) on a background. For white, azure and pink the background is the same color dimmed. For yard waste the ants are azure, the same color as a trash-only week, on a spring green background, because trash and yard waste both go out. The earlier pairing of two close greens that differed only slightly in hue was too hard to see marching. The new pair differs in both hue (228° against 150°) and brightness (azure is roughly twice as bright), which makes the ants easy to pick out.
+The top and bottom show a pattern of "ants" (2 lit pixels out of every 6) on a background. For white, azure and pink the background is the same color dimmed. For yard waste the ants are azure, the same color as a trash-only week, on a spring green background, because trash and yard waste both go out. The earlier pairing of two close greens that differed only slightly in hue was too hard to see marching. The new pair is also luminance-matched, so the ants differ from the background by hue alone (228° against 150°).
 
 ### 2.3 Trash collection
 
