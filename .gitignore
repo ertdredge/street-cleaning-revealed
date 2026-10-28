@@ -1,3 +1,9 @@
 private-local
 .DS_Store
 src/street-cleaning-revealed/secrets.h
+
+# weather module host tests (test/Makefile)
+test/vendor/
+test/weather-forecast-test
+test/weather-cli
+test/*.dSYM/
