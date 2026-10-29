@@ -22,7 +22,7 @@ const Rgb WEATHER_SKY_BLUE = {  38,  58,  66 };   // colder than typical
 //   BLEED_PERCENT_PER_STEP  percent shift each step adds; the width of the soft edge is 100 / this
 // The whole group is fully shifted at about 19 / BLEED_STEPS_PER_C + 100 / BLEED_PERCENT_PER_STEP degrees.
 const float BLEED_STEPS_PER_C = 1.0f;
-const int BLEED_PERCENT_PER_STEP = 20;
+const int BLEED_PERCENT_PER_STEP = 25;
 
 // Typical high in deg C for each day of a leap year, from docs/typical-high-temperatures.csv
 // (generated into typical-highs.cpp by bin/make-typical-highs).
