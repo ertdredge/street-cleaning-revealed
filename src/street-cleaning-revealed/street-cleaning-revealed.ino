@@ -65,7 +65,7 @@
 #define MAX_BRIGHT 48       // bench cap: all 300 pixels white at 64 would be ~1.9 A, too close to the 2 A adapter
 
 // ---- Tunables ---------------------------------------------------------------
-const uint32_t FRAME_MS = 20;            // render period (50 fps)
+const uint32_t FRAME_MS = 10;            // render period (100 fps; faster frames make the temporal dithering finer)
 const float ANIM_PERIOD = 6.0f;          // marching pattern repeats every N pixels
 const float ANIM_LIT = 2.0f;             // ...of which this many are lit
 const uint8_t ANIM_DIM_LEVEL = 96;       // brightness (0..255) of the other pixels; 0 = off
@@ -77,7 +77,8 @@ const int MARCH_MAX_SPEED = 100;         // speed at risk = 90
 // Top strip: the weather forecast (docs/Ambient-Display-Encoding.md section 3).
 const int TOP_PIXELS = TOP_STRIP_PIXELS;   // three groups of 20 (cold, temperate, hot); must equal STRIP_TOP.len
 const float BREATH_MAX_HZ = 0.5f;        // breathing rate at 100% chance of precipitation (2 s period)
-const uint8_t BREATH_MIN_LEVEL = 38;     // dimmest point of a breath, out of 255 (about 15%)
+const uint8_t BREATH_MIN_LEVEL = 38;     // dimmest point of a breath, out of 255 (about 15% of the PWM level)
+const float BREATH_GAMMA = 2.2f;         // the breath is a cosine in perceived brightness; its PWM level is that, to this power
 const int PRECIP_MIN_PERCENT = 10;       // below this the forecast counts as dry (NWS uses 2% for "not expected"): no breathing
 const int TOMORROW_AFTER_HOUR = 17;      // from 5 pm the top strip shows tomorrow's forecast
 const uint32_t WEATHER_POLL_MS = 3600000UL;    // refresh the forecast hourly
@@ -93,7 +94,13 @@ const Strip STRIP_TOP    = { 90, 60 };   // run A, left -> right
 const Strip STRIP_BOTTOM = {150, 60 };   // run B, left -> right
 const Strip STRIP_RIGHT  = {210, 90 };   // run B, bottom -> top
 
+// Drawing happens in `canvas` at full scale; ditherOut() applies the global brightness and the per-pixel
+// breath gain at higher precision and writes the 8-bit result into `leds`, which FastLED sends out.
+CRGB canvas[NUM_LEDS];
 CRGB leds[NUM_LEDS];
+float gainOf[NUM_LEDS];                  // per-pixel multiplier 0..1 (the top strip's breath), reset every frame
+float residual[NUM_LEDS][3];             // dithering: the fraction of an output step not yet sent, per channel
+uint8_t bright = 32;                     // global brightness 0..255, applied in ditherOut (FastLED's own is left at 255)
 
 // Types used in function signatures. The Arduino build auto-generates prototypes and
 // places them before the first function, so these must be defined above it.
@@ -108,11 +115,11 @@ struct TopState { CRGB base[TOP_PIXELS]; int breathPct; float phase; };   // bas
 // ---- Layer 1: primitives ------------------------------------------------------
 // Logical position 0 is the bottom (left/right strips) or the left end (top/bottom).
 CRGB& px(const Strip& s, int pos) {
-  return leds[s.first + constrain(pos, 0, (int)s.len - 1)];
+  return canvas[s.first + constrain(pos, 0, (int)s.len - 1)];
 }
 
 void fillStrip(const Strip& s, CRGB c) {
-  for (int i = 0; i < s.len; i++) leds[s.first + i] = c;
+  for (int i = 0; i < s.len; i++) canvas[s.first + i] = c;
 }
 
 // ---- BEGIN PURE (no hardware; checked on the host) -----------------------------
@@ -178,10 +185,13 @@ float breathRateHz(int precipPercent) {
   return BREATH_MAX_HZ * constrain(precipPercent, 0, 100) / 100.0f;
 }
 
-// Brightness 0..255 of a breath at `phase` (0..1 is one cycle): full at 0, BREATH_MIN_LEVEL at 0.5.
-uint8_t breathLevel(float phase) {
+// PWM gain 0..1 of a breath at `phase` (0..1 is one cycle): full at 0, BREATH_MIN_LEVEL/255 at 0.5.
+// Perceived brightness follows the cosine, so the PWM gain is that raised to BREATH_GAMMA: equal
+// steps look equal, instead of the dim end changing visibly in each step.
+float breathGain(float phase) {
   float w = 0.5f + 0.5f * cosf(2.0f * 3.14159265f * phase);   // 1 -> 0 -> 1
-  return (uint8_t)lroundf(BREATH_MIN_LEVEL + (255 - BREATH_MIN_LEVEL) * w);
+  float pmin = powf(BREATH_MIN_LEVEL / 255.0f, 1.0f / BREATH_GAMMA);
+  return powf(pmin + (1.0f - pmin) * w, BREATH_GAMMA);
 }
 // ---- END WEATHER ---------------------------------------------------------------
 // ---- END PURE ------------------------------------------------------------------
@@ -231,11 +241,32 @@ void drawMarch(const Strip& s, const March& m) {
 }
 
 void drawTop(const Strip& s, const TopState& t) {
-  uint8_t level = t.breathPct > 0 ? breathLevel(t.phase) : 255;
+  float gain = t.breathPct > 0 ? breathGain(t.phase) : 1.0f;
   for (int i = 0; i < s.len; i++) {
-    CRGB c = t.base[i];
-    if (level < 255) c.nscale8_video(level);
-    px(s, i) = c;
+    px(s, i) = t.base[i];
+    gainOf[s.first + i] = gain;          // applied at full precision in ditherOut
+  }
+}
+
+// canvas x gain x brightness -> leds, in floating point, with error-feedback temporal dithering:
+// each channel's rounding error is carried to the next frame, so a level between two 8-bit output
+// steps is shown as a mix of the two. At 100 frames per second the mix reads as a smooth level.
+void ditherOut() {
+  const float scale = bright / 255.0f;
+  for (int i = 0; i < NUM_LEDS; i++) {
+    const uint8_t in[3] = { canvas[i].r, canvas[i].g, canvas[i].b };
+    uint8_t out[3];
+    for (int c = 0; c < 3; c++) {
+      float v = in[c] * gainOf[i] * scale;
+      if (v <= 0.0f) { residual[i][c] = 0.0f; out[c] = 0; continue; }
+      float t = v + residual[i][c];
+      int o = (int)t;                      // t >= 0
+      if (o > 255) o = 255;
+      residual[i][c] = t - o;
+      if (residual[i][c] > 1.0f) residual[i][c] = 1.0f;
+      out[c] = (uint8_t)o;
+    }
+    leds[i] = CRGB(out[0], out[1], out[2]);
   }
 }
 
@@ -246,10 +277,12 @@ void renderFrame() {
   lastFrameMs = now;
   topState.phase = fmodf(topState.phase + breathRateHz(topState.breathPct) * dt, 1.0f);
   advance(bottomMarch, dt);
+  for (int i = 0; i < NUM_LEDS; i++) gainOf[i] = 1.0f;
   drawBar(STRIP_LEFT, leftBar);
   drawBar(STRIP_RIGHT, rightBar);
   drawTop(STRIP_TOP, topState);
   drawMarch(STRIP_BOTTOM, bottomMarch);
+  ditherOut();
   FastLED.show();
 }
 
@@ -555,7 +588,6 @@ AntColors wasteCollectionColors(time_t now) {
 
 // ---- Serial -------------------------------------------------------------------
 CRGB current = CRGB::White;
-uint8_t bright = 32;
 
 bool setColor(char c) {
   switch (c) {
@@ -613,7 +645,6 @@ void handle(String line) {
   }
   else if (cmd == "bright") {
     bright = constrain(arg.toInt(), MIN_BRIGHT, MAX_BRIGHT);
-    FastLED.setBrightness(bright);
     Serial.printf("brightness %d (cap %d)\n", bright, MAX_BRIGHT);
   }
   else if (cmd == "time") {
@@ -690,7 +721,8 @@ void setup() {
 
   FastLED.addLeds<WS2812B, DATA_PIN_A, COLOR_ORDER>(leds, 0, RUN_LEN);
   FastLED.addLeds<WS2812B, DATA_PIN_B, COLOR_ORDER>(leds, RUN_LEN, RUN_LEN);
-  FastLED.setBrightness(bright);
+  FastLED.setBrightness(255);            // brightness is applied in ditherOut, at higher precision
+  FastLED.setDither(DISABLE_DITHER);     // ...and so is the dithering
   lastFrameMs = millis();
   updateFromClock(true);
   Serial.println("street-cleaning-reveaLED ready. try: time 2026-10-22 16:30");
