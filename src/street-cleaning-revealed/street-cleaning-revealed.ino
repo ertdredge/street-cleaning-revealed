@@ -263,6 +263,13 @@ volatile int lastFetchStatus = -1;            // ForecastStatus of the last fetc
 volatile int lastFetchHttp = 0;
 volatile float lastFetchSeconds = 0.0f;
 
+// The `time`, sweep and test-suite commands set the system clock to a simulated date. The weather
+// forecast belongs to the real date, so everything weather-related (the poll task, forecast
+// freshness, which day the top strip shows, the typical high) uses realNow(): the system clock
+// plus the offset recorded when the clock was last set by hand. 0 when the clock is untouched.
+volatile int32_t simClockOffset = 0;
+time_t realNow() { return time(nullptr) + simClockOffset; }
+
 TempPrecip weatherTempPrecip(ForecastDay day, time_t now) {
   xSemaphoreTake(forecastMutex, portMAX_DELAY);
   TempPrecip r = forecast.tempPrecip(day, now);
@@ -278,7 +285,7 @@ void weatherTask(void*) {
   int failures = 0;
   for (;;) {
     uint32_t waitMs = 5000;                // WiFi or clock not ready: look again shortly
-    time_t now = time(nullptr);
+    time_t now = realNow();
     if (WiFi.status() == WL_CONNECTED && now >= CLOCK_VALID_AFTER) {
       Serial.println("weather: fetching");
       uint32_t t0 = millis();
@@ -333,7 +340,7 @@ void printForecast() {
   xSemaphoreTake(forecastMutex, portMAX_DELAY);
   WeatherForecast snap = forecast;
   xSemaphoreGive(forecastMutex);
-  time_t now = time(nullptr);
+  time_t now = realNow();
   if (lastFetchStatus < 0) Serial.println("forecast: no fetch attempted yet (waiting for WiFi and the clock)");
   else Serial.printf("forecast: last fetch %s in %.1f s, http %d\n", forecastStatusName((ForecastStatus)lastFetchStatus), (float)lastFetchSeconds, (int)lastFetchHttp);
   Serial.printf("  wifi %s, free heap %u\n", WiFi.status() == WL_CONNECTED ? "up" : "down", (unsigned)ESP.getFreeHeap());
@@ -354,8 +361,10 @@ bool clockRendered = false;     // true once a valid clock has been rendered
 uint32_t lastClockUpdateMs = 0;
 
 void setClockTo(time_t t) {
+  time_t real = realNow();                  // keep the real date for the weather, whatever is simulated
   struct timeval tv = { t, 0 };
   settimeofday(&tv, nullptr);
+  simClockOffset = (int32_t)(real - t);
 }
 
 // Parses "YYYY-MM-DD HH:MM[:SS]" (US Eastern local time) at s. Returns the position just
@@ -467,15 +476,16 @@ void updateFromClock(bool verbose) {
   setBottom(wasteCollectionColors(now), speed);
 
   // Top: the weather forecast, today's or (from 5 pm) tomorrow's. Dark when there is no fresh forecast.
+  time_t wnow = realNow();                  // real time even while the clock is simulated
   struct tm lt;
-  localtime_r(&now, &lt);
+  localtime_r(&wnow, &lt);
   ForecastDay day = lt.tm_hour >= TOMORROW_AFTER_HOUR ? FORECAST_TOMORROW : FORECAST_TODAY;
-  TempPrecip wx = weatherTempPrecip(day, now);
+  TempPrecip wx = weatherTempPrecip(day, wnow);
   bool haveWx = wx.valid || precipOverride >= 0 || !std::isnan(highOverride);
   int rawPrecip = precipOverride >= 0 ? precipOverride : max(wx.precipPercent, 0);
   int precip = effectivePrecip(rawPrecip);
   float highC = !std::isnan(highOverride) ? highOverride : wx.highC;     // NaN when the feed has no high for that day
-  float typicalC = typicalHighForDay(now, day == FORECAST_TOMORROW ? 1 : 0);
+  float typicalC = typicalHighForDay(wnow, day == FORECAST_TOMORROW ? 1 : 0);
   bool haveDelta = !std::isnan(highC) && !std::isnan(typicalC);
   float deltaC = haveDelta ? highC - typicalC : 0.0f;
   if (haveWx) {
