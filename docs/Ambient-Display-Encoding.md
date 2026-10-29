@@ -123,7 +123,7 @@ The forecast high temperature for today is compared to the [typical](docs/typica
 
 e.g. if today is April 23 and the forecast high temperature is 22.8ºC, that is compared to the historically typical high temperature for April 23 in Boston which is 15.6ºC and it is determined that today's forecast high is 7.2ºC higher than typical.  This number guides the display.
 
-#### 3.2.2 Forecast warm or hot day
+#### 3.2.1 Forecast warm or hot day
 
 If today's forecast high is higher than typical, then the color scarlett (255, 36, 0) *grows* rightward into the right block of 20 pixels, and *bleeds* leftward into the center block of 20 pixels, as follows:
 
@@ -131,9 +131,17 @@ For every *half* degree above typical the next pixel in the right (hot) group of
 
 Additionally, for every *full* degree above typical that number of pixels on the rightmost side of the center block are color shifted away from their default spring green and toward scarlett, 10% more than their neighbot to the left.  So, for example, if today's forecast high is 7.2ºC higher than typical then the 7 rightmost pixels in the center block of 20 pixels have their color adjusted toward scarlett: The rightmost is adusted 70%, the next one is adjusted 60%, and onwards until the 7th pixel from the right edge of the center block is adjusted 10% toward scarlett.
 
-#### 3.2.3 Forecast cool or cold day
+#### 3.2.2 Forecast cool or cold day
 
 If today's forecast high is colder than typical, then the color sky blue (135, 206, 235) *grows* leftward into the left block of 20 pixels, and *bleeds* rightward into the center block of 20 pixels, exactly mirroring the behavior of the warm day but with sky blue instead of scarlett.
+
+#### 3.2.3 Details
+
+- The comparison uses the date being displayed: today's, or tomorrow's from 5pm (3.4.2).
+- Half degrees and full degrees are counted by rounding down. A forecast less than half a degree from typical shows the default display.
+- The number of scarlett (or sky blue) pixels is capped at the 20 pixels of its group, but the bleed is not capped: it advances one pixel per degree without limit. The pixel $j$ places in from the center block's edge is shifted by $10\% \times (bleed - j)$, up to 100%. The whole center block is therefore fully scarlett (or sky blue) from 29ºC away, and scarlett never enters the left block nor sky blue the right block.
+- When the forecast has no high temperature (for example the feed has dropped it), the default display of 3.1 is shown.
+- The typical highs are compiled into the sketch from the CSV, which has a row for every day including February 29. After editing the CSV run `bin/make-typical-highs`.
 
 ### 3.3 Forecast precipitation
 

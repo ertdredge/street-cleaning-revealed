@@ -239,7 +239,7 @@ Encoding: `Ambient-Display-Encoding.md` section 3.
 1. ✅ **W1. Default display (3.1).** Center 20 pixels spring green (0, 72, 36); the cold and hot groups dark.
 2. ✅ **W2. Forecast precipitation (3.3).** All lit pixels breathe at a rate proportional to the probability of precipitation: 0.5 Hz (2 s period) at 100%, none below 10% (`PRECIP_MIN_PERCENT`; NWS reports 2% for "not expected"), brightness between 15% and full. `BREATH_MAX_HZ` and `BREATH_MIN_LEVEL` are constants in the sketch.
 3. ✅ **W3. No-data state.** The top strip is completely dark when there is no forecast or it is stale.
-4. **W4. Deviations from typical (3.2).** Compare today's forecast high with `docs/typical-high-temperatures.csv` (366 rows, including February 29) and grow scarlett or sky blue outward from the center. Not started.
+4. ✅ **W4. Deviations from typical (3.2).** The forecast high for the displayed day is compared with `docs/typical-high-temperatures.csv` (366 rows including February 29, compiled into the sketch by `bin/make-typical-highs`). Scarlett grows into the hot group (one pixel per half degree) and bleeds into the center (10% per pixel); sky blue mirrors it on the cold side. Pure logic and host tests: `weather-display.h/.cpp`, `test/weather-display-test.cpp`. Serial: `high C|off` overrides the forecast high.
 5. **W5. Snow or sleet (3.3.1).** Sparkle animation when snow accumulation is forecast. Not started.
 6. **W6. Snow emergency risk.** Feed the snow amount, probability and start time into the parking snow emergency risk (`Ambient-Display-Encoding.md` section 1). Not started.
 
@@ -280,7 +280,7 @@ arduino-cli lib install ArduinoJson          # 7.x; every .cpp in the sketch fol
 # src/street-cleaning-revealed/secrets.h (git-ignored) must define WIFI_SSID, WIFI_PASS and NWS_USER_AGENT
 # (NWS asks for a contact email in the User-Agent)
 
-# Host tests for the forecast parser (no hardware)
+# Host tests for the forecast parser and the top-strip display (no hardware)
 cd test && make test
 ```
 

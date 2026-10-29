@@ -21,6 +21,8 @@
 //   right N        light N pixels (0..90) from the bottom of the right strip
 //   precip P       force the top strip's chance of precipitation to P (0..100), then render;
 //                  `precip off` goes back to the NWS forecast. (The top strip shows the weather.)
+//   high C         force the top strip's forecast high to C degrees Celsius, then render;
+//                  `high off` goes back to the NWS forecast.
 //   forecast       print the weather snapshot: age, and today's and tomorrow's high and precipitation
 //   bottom S       bottom strip pattern, same scale
 //   color r|g|b|w|y|c|m   set the current color (default w)
@@ -41,6 +43,7 @@
 // Protan note: r/g are easy to confuse by eye. Prefer positions and counts.
 
 #include <FastLED.h>
+#include <cmath>
 #include <sys/time.h>
 #include <time.h>
 #include <WiFi.h>
@@ -48,6 +51,7 @@
 #include "waste.h"               // holidays and the trash-day state (pure calendar logic)
 #include "weather-forecast.h"   // NWS forecast parser and per-day values (pure; needs the ArduinoJson library)
 #include "weather-feed.h"       // HTTPS fetch of the NWS feed (ESP32 only)
+#include "weather-display.h"    // top strip image from the forecast high vs the typical high (pure)
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -71,8 +75,7 @@ const int MARCH_MIN_SPEED = 10;          // speed at risk = MARCH_THRESHOLD
 const int MARCH_MAX_SPEED = 100;         // speed at risk = 90
 
 // Top strip: the weather forecast (docs/Ambient-Display-Encoding.md section 3).
-const int TOP_GROUP = 20;                // three groups of 20: cold, temperate, hot
-const int TOP_PIXELS = 3 * TOP_GROUP;    // must equal STRIP_TOP.len
+const int TOP_PIXELS = TOP_STRIP_PIXELS;   // three groups of 20 (cold, temperate, hot); must equal STRIP_TOP.len
 const float BREATH_MAX_HZ = 0.5f;        // breathing rate at 100% chance of precipitation (2 s period)
 const uint8_t BREATH_MIN_LEVEL = 38;     // dimmest point of a breath, out of 255 (about 15%)
 const int PRECIP_MIN_PERCENT = 10;       // below this the forecast counts as dry (NWS uses 2% for "not expected"): no breathing
@@ -165,14 +168,6 @@ time_t nextCleaningEnd(const Schedule& s, time_t now) {
 }
 
 // ---- BEGIN WEATHER (pure) ------------------------------------------------------
-const CRGB WEATHER_COLOR_TYPICAL = CRGB(0, 72, 36);   // spring green: the temperate group
-
-// 3.1 default display: the center group is lit, the cold and hot groups are dark.
-void weatherBase(CRGB* out) {
-  for (int i = 0; i < TOP_PIXELS; i++)
-    out[i] = (i >= TOP_GROUP && i < 2 * TOP_GROUP) ? WEATHER_COLOR_TYPICAL : CRGB(0, 0, 0);
-}
-
 // Chances of precipitation below PRECIP_MIN_PERCENT are treated as 0: a static, dry display.
 int effectivePrecip(int precipPercent) {
   return precipPercent < PRECIP_MIN_PERCENT ? 0 : constrain(precipPercent, 0, 100);
@@ -203,7 +198,7 @@ void setRight(int n, CRGB c) { rightBar = { constrain(n, 0, (int)STRIP_RIGHT.len
 AntColors antsOf(CRGB c) { CRGB dim = c; dim.nscale8_video(ANIM_DIM_LEVEL); return { c, dim }; }
 
 void setBottom(const AntColors& a, int speed) { bottomMarch.colors = a; bottomMarch.speed = constrain(speed, -100, 100); }
-// Top strip: a TOP_PIXELS base image (see weatherBase) that breathes at breathRateHz(precipPercent).
+// Top strip: a TOP_PIXELS base image (see weatherTopImage) that breathes at breathRateHz(precipPercent).
 void setTop(const CRGB* base, int precipPercent) {
   for (int i = 0; i < TOP_PIXELS; i++) topState.base[i] = base[i];   // not memcpy: FastLED 3.10 adds an fl::memcpy that makes the call ambiguous for CRGB
   topState.breathPct = constrain(precipPercent, 0, 100);
@@ -263,6 +258,7 @@ WeatherForecast forecast;                  // the snapshot the display reads; gu
 SemaphoreHandle_t forecastMutex;
 volatile bool weatherUpdated = false;      // set by the poll task after a good fetch; loop() re-renders
 int precipOverride = -1;                   // serial `precip P` test override; -1 = use the forecast
+float highOverride = NAN;                  // serial `high C` test override of the forecast high; NaN = use the forecast
 volatile int lastFetchStatus = -1;            // ForecastStatus of the last fetch, -1 = none yet (for `forecast`)
 volatile int lastFetchHttp = 0;
 volatile float lastFetchSeconds = 0.0f;
@@ -322,6 +318,17 @@ void weatherTask(void*) {
   }
 }
 
+// Typical high (deg C) for the calendar date `dayOffset` days after the one containing `now`.
+float typicalHighForDay(time_t now, int dayOffset) {
+  struct tm t;
+  localtime_r(&now, &t);
+  t.tm_mday += dayOffset;
+  t.tm_hour = 12; t.tm_min = 0; t.tm_sec = 0;
+  t.tm_isdst = -1;
+  mktime(&t);                               // normalizes month and day across month ends
+  return typicalHighC(t.tm_mon + 1, t.tm_mday);
+}
+
 void printForecast() {
   xSemaphoreTake(forecastMutex, portMAX_DELAY);
   WeatherForecast snap = forecast;
@@ -335,7 +342,9 @@ void printForecast() {
   for (int d = 0; d < 2; d++) {
     TempPrecip t = snap.tempPrecip((ForecastDay)d, now);
     if (!t.valid) { Serial.printf("  %s: no fresh data\n", d ? "tomorrow" : "today"); continue; }
-    Serial.printf("  %s: high %.1f C, precipitation %d%%\n", d ? "tomorrow" : "today", t.highC, t.precipPercent);
+    float typical = typicalHighForDay(now, d);
+    Serial.printf("  %s: high %.1f C (typical %.1f C, %+.1f), precipitation %d%%\n", d ? "tomorrow" : "today",
+                  t.highC, typical, t.highC - typical, t.precipPercent);
   }
 }
 
@@ -462,12 +471,18 @@ void updateFromClock(bool verbose) {
   localtime_r(&now, &lt);
   ForecastDay day = lt.tm_hour >= TOMORROW_AFTER_HOUR ? FORECAST_TOMORROW : FORECAST_TODAY;
   TempPrecip wx = weatherTempPrecip(day, now);
-  bool haveWx = wx.valid || precipOverride >= 0;
+  bool haveWx = wx.valid || precipOverride >= 0 || !std::isnan(highOverride);
   int rawPrecip = precipOverride >= 0 ? precipOverride : max(wx.precipPercent, 0);
   int precip = effectivePrecip(rawPrecip);
+  float highC = !std::isnan(highOverride) ? highOverride : wx.highC;     // NaN when the feed has no high for that day
+  float typicalC = typicalHighForDay(now, day == FORECAST_TOMORROW ? 1 : 0);
+  bool haveDelta = !std::isnan(highC) && !std::isnan(typicalC);
+  float deltaC = haveDelta ? highC - typicalC : 0.0f;
   if (haveWx) {
+    Rgb img[TOP_PIXELS];
+    weatherTopImage(haveDelta, deltaC, img);
     CRGB base[TOP_PIXELS];
-    weatherBase(base);
+    for (int i = 0; i < TOP_PIXELS; i++) base[i] = CRGB(img[i].r, img[i].g, img[i].b);
     setTop(base, precip);
   } else {
     setTopDark();
@@ -483,10 +498,22 @@ void updateFromClock(bool verbose) {
     reportSide("left ", endL, now, riskL);
     reportSide("right", endR, now, riskR);
     Serial.printf("bottom speed %d\n", speed);
-    if (haveWx) Serial.printf("top: %s forecast%s, precipitation %d%%, breathing %.2f Hz\n",
-                              day == FORECAST_TOMORROW ? "tomorrow's" : "today's",
-                              precipOverride >= 0 ? " (overridden)" : "", rawPrecip, breathRateHz(precip));
-    else Serial.println("top: no forecast, dark");
+    if (haveWx) {
+      Serial.printf("top: %s forecast, precipitation %d%%%s, breathing %.2f Hz\n",
+                    day == FORECAST_TOMORROW ? "tomorrow's" : "today's",
+                    rawPrecip, precipOverride >= 0 ? " (overridden)" : "", breathRateHz(precip));
+      if (haveDelta) {
+        TopShape sh = topShapeFor(deltaC);
+        Serial.printf("top: high %.1f C%s vs typical %.1f C (%+.1f): %s\n", highC,
+                      !std::isnan(highOverride) ? " (overridden)" : "", typicalC, deltaC,
+                      sh.hotPixels ? "hot" : sh.coldPixels ? "cold" : "about typical");
+        if (sh.hotPixels || sh.coldPixels)
+          Serial.printf("top: %d %s pixels, bleed depth %d into the center\n",
+                        sh.hotPixels + sh.coldPixels, sh.hotPixels ? "scarlett" : "sky blue", sh.hotBleed + sh.coldBleed);
+      } else {
+        Serial.println("top: no forecast high, default display");
+      }
+    } else Serial.println("top: no forecast, dark");
     const char* why = nullptr;
     WasteState ws = wasteState(now, &why);
     Serial.printf("waste: %s%s%s%s\n",
@@ -549,7 +576,7 @@ void handle(String line) {
   String cmd = sp < 0 ? line : line.substring(0, sp);
   String arg = sp < 0 ? "" : line.substring(sp + 1);
   arg.trim();
-  if (cmd != "status" && cmd != "risk" && cmd != "precip" && cmd != "forecast") { sweepActive = false; suiteActive = false; }   // any other command ends a sweep or test suite
+  if (cmd != "status" && cmd != "risk" && cmd != "precip" && cmd != "high" && cmd != "forecast") { sweepActive = false; suiteActive = false; }   // any other command ends a sweep or test suite
 
   if (cmd == "left")        { clockMode = false; setLeft(arg.toInt(), current);   Serial.printf("left %d\n", leftBar.n); }
   else if (cmd == "right")  { clockMode = false; setRight(arg.toInt(), current);  Serial.printf("right %d\n", rightBar.n); }
@@ -560,6 +587,13 @@ void handle(String line) {
     else if (arg.length()) precipOverride = constrain(arg.toInt(), 0, 100);
     if (precipOverride >= 0) Serial.printf("precip override %d%%\n", precipOverride);
     else Serial.println("precip override off (using the forecast)");
+    updateFromClock(true);
+  }
+  else if (cmd == "high") {
+    if (arg == "off") highOverride = NAN;
+    else if (arg.length()) highOverride = constrain(arg.toFloat(), -60.0f, 60.0f);
+    if (!std::isnan(highOverride)) Serial.printf("high override %.1f C\n", highOverride);
+    else Serial.println("high override off (using the forecast)");
     updateFromClock(true);
   }
   else if (cmd == "forecast") printForecast();
@@ -617,7 +651,7 @@ void handle(String line) {
                   topState.breathPct, bottomMarch.speed, clockMode ? "on" : "off",
                   RUN_LEN, DATA_PIN_A, DATA_PIN_B);
   }
-  else Serial.println("commands: left N | right N | bottom S | precip P|off | forecast | color X | bright B | off | time [YYYY-MM-DD HH:MM] | test-suite | risk H | status");
+  else Serial.println("commands: left N | right N | bottom S | precip P|off | high C|off | forecast | color X | bright B | off | time [YYYY-MM-DD HH:MM] | test-suite | risk H | status");
 }
 
 String inbuf;
