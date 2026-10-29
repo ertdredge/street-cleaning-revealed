@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 # Writes data/synthetic/*.json: variants of the real NWS capture
-# (data/BOX-70,102-10-28-2026-full.txt) with a few values edited. Everything else in each file,
+# (data/historical/BOX-70,102-10-28-2026-full.json) with a few values edited. Everything else in each file,
 # structure, key order, intervals and the ~60 unused properties, is the real response, so the
 # parser is exercised against realistic input. Used by weather-forecast-test.cpp, which holds the
 # expected results. Run `make fixtures` after changing this file.

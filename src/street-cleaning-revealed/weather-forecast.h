@@ -76,7 +76,7 @@
 //   make deps     # once: downloads the ArduinoJson single header into test/vendor/
 //   make test     # builds and runs weather-forecast-test against test/data fixtures
 //   make cli      # builds weather-cli, a command-line front end:
-//   ./weather-cli --file "data/BOX-70,102-10-28-2026-full.txt" --now "2026-10-28 15:14"
+//   ./weather-cli --file "data/historical/BOX-70,102-10-28-2026-full.json" --now "2026-10-28 15:14"
 //   ./weather-cli --file data/synthetic/snow-tomorrow-6in.json --now "2026-10-28 15:14"
 //   ./weather-cli --live                  # the real feed, via curl
 //   ./weather-cli --url http://localhost:8080/gridpoint    # a mock server, via curl
@@ -141,6 +141,30 @@ class MemoryForecastSource : public ForecastSource {
  private:
   const char* p_;
   const char* end_;
+};
+
+// Wraps another source and removes HTTP chunked transfer encoding if the body turns out to use it.
+// The first byte decides: JSON starts with '{' (or whitespace), a chunked body starts with a hexadecimal
+// chunk size, so the two cannot be confused. A plain body passes through unchanged. A chunked stream
+// that ends early simply ends, which the parser then reports as a parse error.
+class DechunkingSource : public ForecastSource {
+ public:
+  explicit DechunkingSource(ForecastSource& inner) : in_(inner), mode_(UNKNOWN), peeked_(-1), left_(-1), out_(0) {}
+  int read() override;
+  size_t readBytes(char* buf, size_t n) override;
+  bool   chunked() const { return mode_ == CHUNKED || (mode_ == DONE && wasChunked_); }
+  size_t bytesOut() const { return out_; }     // bytes delivered to the caller (after removing chunk framing)
+ private:
+  enum Mode { UNKNOWN, PLAIN, CHUNKED, DONE };
+  void   sniff();
+  int    rd();                 // next underlying byte, -1 at the end
+  bool   nextChunk();          // reads the next chunk-size line into left_; false at the last chunk or on error
+  ForecastSource& in_;
+  Mode   mode_;
+  bool   wasChunked_ = false;
+  int    peeked_;              // the sniffed first byte, -1 once consumed
+  long   left_;                // bytes left in the current chunk; -1 = a size line is due
+  size_t out_;
 };
 
 // ---- Results -----------------------------------------------------------------------------------

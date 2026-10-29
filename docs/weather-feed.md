@@ -56,7 +56,7 @@ GET https://api.weather.gov/gridpoints/BOX/70,102
 - The grid cell is resolved once from `/points/42.3876,-71.0995`, which returns office `BOX`, grid X 70, Y 102, and is then fixed in the design. The device never makes the lookup.
 - `User-Agent` names the project and carries a contact address, as NWS requests, so that NWS can reach the owner if traffic ever misbehaves.
 - `Accept: application/geo+json`. No `Accept-Encoding`, so the body arrives uncompressed and can be streamed straight into the parser.
-- HTTP/1.0 is requested so the server does not use chunked transfer encoding; chunk-size lines in the middle of the JSON would be indistinguishable from a corrupt feed.
+- HTTP/1.0 is requested so the server does not use chunked transfer encoding; chunk-size lines in the middle of the JSON would be indistinguishable from a corrupt feed. If a server chunks anyway, `DechunkingSource` removes the framing (it tells the two apart by the first byte: JSON starts with `{`, a chunk size with a hex digit).
 - Redirects are followed, since NWS can renumber grid cells.
 - TLS verification is off by default (public, read-only data driving an art installation), with the option to pin a root certificate.
 

@@ -41,9 +41,9 @@ If inches forecast is < 4 then the risk function result is multiplied by $\frac{
 
 ---
 
-## 2. Top and Bottom
+## 2. Bottom
 
-The top and bottom emphasize the information on the left and right static bar graphs and layer in information about trash and yard waste collection. Both strips always show the same color and animation.
+The bottom emphasizes the information on the left and right static bar graphs and layer in information about trash and yard waste collection. Both strips always show the same color and animation.
 
 ### 2.1 Animation
 
@@ -60,9 +60,9 @@ The top and bottom emphasize the information on the left and right static bar gr
 | Azure and spring green | Put out the trash and yard waste (azure ants on a spring green background) | 0, 50, 252 and 0, 72, 36 |
 | Pink | Holiday delay: the regular Wednesday pickup is skipped, don't put it out yet | 90, 35, 60 |
 
-Red, green and yellow mean "don't" and "safe" and are reserved for parking on the left and right bar graphs, so the top and bottom never reuse them. The colors here avoid every hue the bar graphs use (green at 118° through amber to red at 0°). All four are luminance-matched to the bar graph colors so no state looks brighter than another. Azure is pure blue plus a little green: pure blue can't reach the same luminance.
+Red, green and yellow mean "don't" and "safe" and are reserved for parking on the left and right bar graphs, so the bottom never reuses them. The colors here avoid every hue the bar graphs use (green at 118° through amber to red at 0°). All four are luminance-matched to the bar graph colors so no state looks brighter than another. Azure is pure blue plus a little green: pure blue can't reach the same luminance.
 
-The top and bottom show a pattern of "ants" (2 lit pixels out of every 6) on a background. For white, azure and pink the background is the same color dimmed. For yard waste the ants are azure, the same color as a trash-only week, on a spring green background, because trash and yard waste both go out. The earlier pairing of two close greens that differed only slightly in hue was too hard to see marching. The new pair is also luminance-matched, so the ants differ from the background by hue alone (228° against 150°).
+The bottom shows a pattern of "ants" (2 lit pixels out of every 6) on a background. For white, azure and pink the background is the same color dimmed. For yard waste the ants are azure, the same color as a trash-only week, on a spring green background, because trash and yard waste both go out. The earlier pairing of two close greens that differed only slightly in hue was too hard to see marching. The new pair is also luminance-matched, so the ants differ from the background by hue alone (228° against 150°).
 
 ### 2.3 Trash collection
 
@@ -102,3 +102,53 @@ Yard waste is collected together with trash on the same pickup day, so a yard wa
 - **2nd Sunday in December until the 2nd Sunday in April:** none; trash only (azure)
 
 The alternating weeks count from the 2nd Saturday in May, so which weeks have yard waste shifts from year to year. A holiday delay moves the pickup within its week; it does not change the week's type or the alternation.
+
+---
+
+## 3. Top
+
+The top LED strip represents basic information about today's weather forecast, or tomorrow's weather forecast if after 5pm.
+
+The 60 pixels of the top LED strip is divided into three groups of 20 pixels: Left (cold), center (temperate), and right (hot).
+
+Calculations are in degrees Celsius.
+
+### 3.1 Default display
+
+The center 20 pixels are always illuminated.  On a day with an unremarkable weather forecast (no precipitation forecast and a forecast high temperature exactly equal to historical averages for that day of the year) those center 20 pixels are illuminated spring green (0, 72, 36), while the left 20 pixels and right 20 pixels are dark.
+
+### 3.2 Deviations from typical for today's forecast high temperature
+
+The forecast high temperature for today is compared to the [typical](docs/typical-high-temperatures.csv) high temperature for the current day of the year.
+
+e.g. if today is April 23 and the forecast high temperature is 22.8ºC, that is compared to the historically typical high temperature for April 23 in Boston which is 15.6ºC and it is determined that today's forecast high is 7.2ºC higher than typical.  This number guides the display.
+
+#### 3.2.2 Forecast warm or hot day
+
+If today's forecast high is higher than typical, then the color scarlett (255, 36, 0) *grows* rightward into the right block of 20 pixels, and *bleeds* leftward into the center block of 20 pixels, as follows:
+
+For every *half* degree above typical the next pixel in the right (hot) group of 20 pixels is illuminated scarlett.  So, for example, if today's forecast high is 7.2ºC higher than typical then the 14 leftmost pixels in the right block of 20 pixels are illuminated scarlett.
+
+Additionally, for every *full* degree above typical that number of pixels on the rightmost side of the center block are color shifted away from their default spring green and toward scarlett, 10% more than their neighbot to the left.  So, for example, if today's forecast high is 7.2ºC higher than typical then the 7 rightmost pixels in the center block of 20 pixels have their color adjusted toward scarlett: The rightmost is adusted 70%, the next one is adjusted 60%, and onwards until the 7th pixel from the right edge of the center block is adjusted 10% toward scarlett.
+
+#### 3.2.3 Forecast cool or cold day
+
+If today's forecast high is colder than typical, then the color sky blue (135, 206, 235) *grows* leftward into the left block of 20 pixels, and *bleeds* rightward into the center block of 20 pixels, exactly mirroring the behavior of the warm day but with sky blue instead of scarlett.
+
+### 3.3 Forecast precipitation
+
+If *any* precipitation is forecast for today, all illuminated pixels in the top LED strip perform a "breathing" animation, cycling slowly between maximum and minimum illumination.  The rate of the breathing animation is proportional to the likelihood of precipitation: 100% probability of precipitation is the highest "breathing" speed, while 50% probability of precipitation is 50% of the highest "breathing" speed, and 0% probability of precipitation is no breathing animation used.  A probability under 10% is treated as 0%: NWS reports 2% to mean precipitation is not expected but not impossible, which is best shown as the static no-precipitation display.
+
+#### 3.3.1 Snow or sleet
+
+If any snow or sleet accumulation is forecast for today, a sparkle animation is added throughout the top LED strip pixels, with random pixels briefly flashing white.
+
+### 3.4 Update frequency
+
+#### 3.4.1 Polling
+
+The National Weather Service API is refreshed once an hour.
+
+#### 3.4.2 Daily rollover
+
+At 5pm local time the top LED strip starts representing *tomorrow's* weather forecast (forecast high temperature and probability of precicpitation) instead of the remainder of today.

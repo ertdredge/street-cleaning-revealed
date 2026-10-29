@@ -1,6 +1,6 @@
 // Unit tests for weather-forecast.h/.cpp, run on a Mac or Linux host: `make test` in this directory.
 // No framework: each CHECK prints its line number on failure; the exit status is nonzero if any failed.
-// Fixtures are in data/: the real capture (BOX-70,102-10-28-2026-full.txt) and synthetic variants
+// Fixtures are in data/: the real capture (historical/BOX-70,102-10-28-2026-full.json) and synthetic variants
 // made from it by make-synthetic-fixtures.rb. Times are US Eastern, set below with a POSIX TZ rule.
 #include "weather-forecast.h"
 #include <math.h>
@@ -34,7 +34,7 @@ static time_t utc(int Y, int M, int D, int h, int m, int s = 0) {
   return timegm(&t);
 }
 
-static const char* RAW = "BOX-70,102-10-28-2026-full.txt";
+static const char* RAW = "historical/BOX-70,102-10-28-2026-full.json";
 static time_t NOW;   // 2026-10-28 15:14 local, when the real capture was taken; set in main() once TZ is set
 
 // Loads data/<name> into `wf`.
@@ -240,6 +240,99 @@ static void testDstFallBack() {
   CHECK_NEAR(wf.tempPrecip(FORECAST_TOMORROW, sat).highC, 16.6667, 0.001);   // Sunday, whose interval starts 07:00 EST
 }
 
+// An HTTP body sent with chunked transfer encoding (what a server may do despite an HTTP/1.0
+// request) must give the same result as the plain body; a plain body must pass through untouched.
+static std::string readAll(const char* name) {
+  std::string path = std::string(DATA_DIR) + "/" + name, text;
+  FILE* f = fopen(path.c_str(), "rb");
+  if (!f) return text;
+  char buf[4096];
+  size_t n;
+  while ((n = fread(buf, 1, sizeof buf, f)) > 0) text.append(buf, n);
+  fclose(f);
+  return text;
+}
+
+static std::string chunkify(const std::string& body, const size_t* sizes, int nsizes, bool uppercase, bool extension) {
+  std::string out;
+  size_t pos = 0;
+  int i = 0;
+  while (pos < body.size()) {
+    size_t n = sizes[i++ % nsizes];
+    if (n > body.size() - pos) n = body.size() - pos;
+    char hdr[32];
+    snprintf(hdr, sizeof hdr, uppercase ? "%zX" : "%zx", n);
+    out += hdr;
+    if (extension) out += ";name=value";
+    out += "\r\n";
+    out.append(body, pos, n);
+    out += "\r\n";
+    pos += n;
+  }
+  out += "0\r\n\r\n";
+  return out;
+}
+
+static void testChunkedTransfer() {
+  printf("chunked transfer encoding\n");
+  std::string body = readAll(RAW);
+  CHECK(body.size() > 100000);
+  static const size_t sizes[] = { 4096, 1, 7, 1000, 65536, 3 };
+
+  for (int variant = 0; variant < 3; variant++) {
+    std::string chunked = chunkify(body, sizes, 6, variant == 1, variant == 2);
+    MemoryForecastSource mem(chunked.data(), chunked.size());
+    DechunkingSource src(mem);
+    WeatherForecast wf;
+    CHECK_STATUS(wf.update(src, NOW), FORECAST_OK);
+    CHECK(src.chunked());
+    TempPrecip t = wf.tempPrecip(FORECAST_TODAY, NOW);
+    CHECK(t.valid);
+    CHECK_NEAR(t.highC, 13.3333, 0.001);
+    CHECK(t.precipPercent == 2);
+  }
+
+  {                                                   // a plain body passes through unchanged
+    MemoryForecastSource mem(body.data(), body.size());
+    DechunkingSource src(mem);
+    WeatherForecast wf;
+    CHECK_STATUS(wf.update(src, NOW), FORECAST_OK);
+    CHECK(!src.chunked());
+    CHECK(src.bytesOut() > 0);
+  }
+  {                                                   // byte by byte gives the same bytes as in bulk
+    std::string chunked = chunkify("{\"a\": [1, 2, 3]}", sizes, 6, false, false);
+    MemoryForecastSource mem(chunked.data(), chunked.size());
+    DechunkingSource src(mem);
+    std::string got;
+    int c;
+    while ((c = src.read()) >= 0) got += (char)c;
+    CHECK(got == "{\"a\": [1, 2, 3]}");
+  }
+  {                                                   // a chunked stream that ends early is a parse error, not a crash
+    std::string chunked = chunkify(body, sizes, 6, false, false);
+    chunked.resize(chunked.size() / 2);
+    MemoryForecastSource mem(chunked.data(), chunked.size());
+    DechunkingSource src(mem);
+    WeatherForecast wf;
+    CHECK_STATUS(wf.update(src, NOW), FORECAST_PARSE_ERROR);
+    CHECK(!wf.hasData());
+  }
+  {                                                   // garbage that starts like a chunk size but is not
+    const char junk[] = "deadbeef this is not a chunk header";
+    MemoryForecastSource mem(junk, sizeof junk - 1);
+    DechunkingSource src(mem);
+    WeatherForecast wf;
+    CHECK(wf.update(src, NOW) != FORECAST_OK);
+  }
+  {                                                   // an empty body
+    MemoryForecastSource mem("", 0);
+    DechunkingSource src(mem);
+    WeatherForecast wf;
+    CHECK_STATUS(wf.update(src, NOW), FORECAST_IO_ERROR);
+  }
+}
+
 int main() {
   setenv("TZ", "EST5EDT,M3.2.0,M11.1.0", 1);                    // the same rule the sketch uses
   tzset();
@@ -253,6 +346,7 @@ int main() {
   testFailuresKeepPreviousData();
   testTodaysHighCarriedForward();
   testDstFallBack();
+  testChunkedTransfer();
   printf("\n%d checks, %d failed\n", checks, failures);
   return failures ? 1 : 0;
 }

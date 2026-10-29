@@ -4,12 +4,14 @@
 //
 //   HttpsForecastSource feed;
 //   feed.open("https://api.weather.gov/gridpoints/BOX/70,102", "street-cleaning-revealed/1.0 (you@example.com)");
-//   forecast.update(feed, time(nullptr));          // forecast is a WeatherForecast
+//   DechunkingSource body(feed);
+//   forecast.update(body, time(nullptr));          // forecast is a WeatherForecast
 //   feed.close();
 //
 // Notes on the choices made here:
 //   * HTTP/1.0 is requested so the server doesn't use chunked transfer encoding, whose chunk-size
-//     lines would otherwise appear in the middle of the JSON and look like a corrupt feed.
+//     lines would otherwise appear in the middle of the JSON and look like a corrupt feed. If a
+//     server chunks anyway, wrap this source in a DechunkingSource (weather-forecast.h).
 //   * No Accept-Encoding header is sent, so the (about 290 KB) body arrives uncompressed and is
 //     streamed straight into the parser; it is never held in memory.
 //   * NWS asks every client to send a User-Agent that identifies the application and a contact.
@@ -31,12 +33,14 @@
 
 class HttpsForecastSource : public ForecastSource {
  public:
-  HttpsForecastSource() : stream_(nullptr), status_(0) {}
+  HttpsForecastSource() : stream_(nullptr), status_(0), total_(0), headLen_(0), timeoutMs_(20000) { head_[0] = 0; }
   ~HttpsForecastSource() { close(); }
 
   bool open(const char* url, const char* userAgent, uint32_t timeoutMs = 20000, const char* rootCaPem = nullptr);
   void close();
   int httpStatus() const { return status_; }
+  size_t bytesRead() const { return total_; }                 // raw bytes received from the server (since open())
+  const char* head() const { return head_; }                  // the first raw bytes received, NUL-terminated, for diagnosing a bad body
 
   int read() override;
   size_t readBytes(char* buf, size_t n) override;
@@ -48,5 +52,9 @@ class HttpsForecastSource : public ForecastSource {
   HTTPClient http_;
   Stream* stream_;
   int status_;
+  size_t total_;
+  size_t headLen_;
+  uint32_t timeoutMs_;
+  char head_[161];
 };
 #endif  // ARDUINO

@@ -272,6 +272,78 @@ size_t MemoryForecastSource::readBytes(char* buf, size_t n) {
   return n;
 }
 
+// ---- DechunkingSource ----------------------------------------------------------------------------
+namespace {
+int hexValue(int c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+}  // namespace
+
+int DechunkingSource::rd() {
+  if (peeked_ >= 0) { int c = peeked_; peeked_ = -1; return c; }
+  return in_.read();
+}
+
+void DechunkingSource::sniff() {
+  if (mode_ != UNKNOWN) return;
+  int c = in_.read();
+  if (c < 0) { mode_ = DONE; return; }
+  peeked_ = c;
+  mode_ = hexValue(c) >= 0 ? CHUNKED : PLAIN;
+  wasChunked_ = (mode_ == CHUNKED);
+}
+
+bool DechunkingSource::nextChunk() {
+  for (;;) {                                   // blank lines (the CRLF after chunk data) are skipped
+    long size = 0;
+    bool any = false;
+    int c;
+    while ((c = rd()) >= 0 && c != '\n') {
+      if (c == '\r') continue;
+      if (c == ';') { while ((c = rd()) >= 0 && c != '\n') {} break; }   // chunk extension: ignore
+      int v = hexValue(c);
+      if (v < 0) { mode_ = DONE; return false; }                         // not a chunk header: corrupt
+      size = size * 16 + v;
+      any = true;
+    }
+    if (c < 0) { mode_ = DONE; return false; }                           // ended inside a header
+    if (!any) continue;
+    if (size == 0) { mode_ = DONE; return false; }                       // the last chunk
+    left_ = size;
+    return true;
+  }
+}
+
+int DechunkingSource::read() {
+  char c;
+  return readBytes(&c, 1) == 1 ? (unsigned char)c : -1;
+}
+
+size_t DechunkingSource::readBytes(char* buf, size_t n) {
+  sniff();
+  size_t got = 0;
+  if (mode_ == PLAIN) {
+    if (peeked_ >= 0 && n > 0) { buf[got++] = (char)peeked_; peeked_ = -1; }
+    if (got < n) got += in_.readBytes(buf + got, n - got);
+    out_ += got;
+    return got;
+  }
+  while (mode_ == CHUNKED && got < n) {
+    if (left_ < 0 && !nextChunk()) break;
+    size_t want = (size_t)left_ < n - got ? (size_t)left_ : n - got;
+    size_t r = in_.readBytes(buf + got, want);
+    got += r;
+    left_ -= (long)r;
+    if (left_ == 0) left_ = -1;
+    if (r < want) { mode_ = DONE; break; }    // the source ended or timed out inside a chunk
+  }
+  out_ += got;
+  return got;
+}
+
 // ---- WeatherForecast -----------------------------------------------------------------------------
 WeatherForecast::WeatherForecast(const ForecastConfig& cfg)
     : cfg_(cfg), have_(false), lastGood_(0), feedUpdated_(0), last_(FORECAST_IO_ERROR) {

@@ -4,7 +4,7 @@
 
 ## 1. Purpose and one-paragraph summary
 
-Outdoor LED art installation that frames a window of roughly **38.5" x 60"*. The top and bottom strips animate to urge parallel parked cars to the safe side of the street when street cleaning is imminent, and change color based on trash collection or yard waste collection. The **two side strips act as bar graphs** whose displayed value ranges over **0–90** and is **updated hourly**, with colors and values that reflect how risky it is to park on that side of the street. Control is by an **ESP32 microcontroller running FastLED**. In a later phase the controller will use **WiFi and HTTPS** to monitor a web page for keywords and augment the 0–21 values with information gleaned from there.
+Outdoor LED art installation that frames a window of roughly **38.5" x 60"*. The bottom strip animates to urge parallel parked cars to the safe side of the street when street cleaning is imminent, and changes color based on trash collection or yard waste collection. The top strip shows the day's weather forecast (a default display, and a breathing animation when precipitation is forecast; temperature and snow come later). The **two side strips act as bar graphs** whose displayed value ranges over **0–90** and is **updated hourly**, with colors and values that reflect how risky it is to park on that side of the street. Control is by an **ESP32 microcontroller running FastLED**. The controller uses **WiFi and HTTPS** to read the National Weather Service forecast for the top strip; a later phase will also use the forecast to track parking snow emergencies.
 
 ---
 
@@ -15,10 +15,11 @@ Outdoor LED art installation that frames a window of roughly **38.5" x 60"*. The
 | Requirement | Detail |
 |---|---|
 | Geometry | Frame a window ~105 cm wide × ~160 cm tall. Perimeter ≈ 2 × (105 + 160) = **530 cm**. A single ~5 m reel is "slightly too short" for the full 530 cm |
-| Top and bottom | Animate for parking and color for waste collection. |
+| Bottom | Animate for parking and color for waste collection. |
+| Top | Weather forecast for today (tomorrow's from 5 pm): three groups of 20 pixels for cold, temperate and hot; breathing when precipitation is forecast. See `Ambient-Display-Encoding.md` section 3. |
 | Sides | Bar graphs, values 0–90, updated hourly. |
 | Firmware | FastLED on ESP32. |
-| Later connectivity | WiFi + HTTPS to watch a web page for keywords and influence the bar values. |
+| Connectivity | WiFi + HTTPS to fetch the NWS gridpoint forecast hourly (design: `weather-feed.md`). Later: use it to track parking snow emergencies. |
 
 ### 2.2 Visibility
 
@@ -42,6 +43,8 @@ The project will illustrate the number of days remaining to a biweekly street cl
 Trash and yard waste collection is every Wednesday on this street unless delayed to Thursday by a holliday.
 
 Snow emergencies are called by the city periodicallly and parking is prohibited on one side of the street or the other.  Evenutally this information will be retrieved from the internet and incorporated into the display.
+
+The top strip shows the weather forecast instead of repeating the bottom strip. Encoding rules are in `Ambient-Display-Encoding.md` section 3; the forecast source, derived values and failure policy are in `weather-feed.md`. A fetch failure or a forecast older than 12 hours leaves the top strip completely dark.
 
 ### 3.1 Installation layout
 
@@ -219,14 +222,26 @@ Considerations:
 - **Power:** each run gets its own parallel feed from the 12 V supply, not series.
 - Retest each piece individually before testing together.
 
-### Phase C — Network and daily update logic
+### Phase C — Network and weather feed
 
 1. ✅ **C1. WiFi bring-up.** Connect the ESP32 to WiFi.
-2. ✅ **C2. Time.** Use NTP so the "once per day" schedule is meaningful; handle timezone (America/New_York) and DST.
-3. **C3. HTTPS fetch.** Use `WiFiClientSecure` with proper certificate validation (a root CA bundle or pinned certificate), not `setInsecure()`. Note that TLS roots expire; plan for updating them.
-4. **C4. Keyword parse.** Define keyword/page signal.
-6. **C5. Persistence.** Store the last good value in NVS flash so a power loss does not lose state.
-7. **C6. Observability.** An easy way to see last-update time and last value (serial log, a status LED pattern, or a trivial web endpoint).
+2. ✅ **C2. Time.** Use NTP so the schedules are meaningful; handle timezone (America/New_York) and DST.
+3. **C3. HTTPS fetch.** The NWS gridpoint feed (`https://api.weather.gov/gridpoints/BOX/70,102`) is fetched by `weather-feed.cpp` and parsed by `weather-forecast.cpp` (design in `weather-feed.md`). The fetch currently skips certificate verification (`setInsecure()`), which is acceptable for public read-only data driving an art installation but is not the plan's original goal; pinning a root certificate is supported by `HttpsForecastSource::open()` and remains a decision. TLS roots expire, so a pinned certificate needs a renewal plan.
+4. ✅ **C4. Forecast parsing.** Forecast high, probability of precipitation and snow values per local day, streamed through an ArduinoJson filter (about 30 KB of heap, never the 290 KB response). Replaces the original "keyword parse" idea. Host-tested against real captures and synthetic variants (`test/`).
+5. ✅ **C5. Polling.** A FreeRTOS task on core 0 (20 KB stack) fetches hourly once WiFi is up and the clock is set, and retries after 5 minutes on failure. The renderer on core 1 only reads the latest snapshot, under a mutex. A failure never discards good data, and the snapshot expires after 12 hours.
+6. **C6. Persistence.** Store the last good forecast in NVS flash so that a reboot does not leave the top strip dark until the first fetch. Not started; optional.
+7. **C7. Observability.** Serial commands today: `forecast` prints the snapshot age and today's and tomorrow's values, and `precip P|off` overrides the precipitation probability for testing. A status LED pattern or a trivial web endpoint is not started.
+
+### Phase W — Top strip weather display
+
+Encoding: `Ambient-Display-Encoding.md` section 3.
+
+1. ✅ **W1. Default display (3.1).** Center 20 pixels spring green (0, 72, 36); the cold and hot groups dark.
+2. ✅ **W2. Forecast precipitation (3.3).** All lit pixels breathe at a rate proportional to the probability of precipitation: 0.5 Hz (2 s period) at 100%, none below 10% (`PRECIP_MIN_PERCENT`; NWS reports 2% for "not expected"), brightness between 15% and full. `BREATH_MAX_HZ` and `BREATH_MIN_LEVEL` are constants in the sketch.
+3. ✅ **W3. No-data state.** The top strip is completely dark when there is no forecast or it is stale.
+4. **W4. Deviations from typical (3.2).** Compare today's forecast high with `docs/typical-high-temperatures.csv` (366 rows, including February 29) and grow scarlett or sky blue outward from the center. Not started.
+5. **W5. Snow or sleet (3.3.1).** Sparkle animation when snow accumulation is forecast. Not started.
+6. **W6. Snow emergency risk.** Feed the snow amount, probability and start time into the parking snow emergency risk (`Ambient-Display-Encoding.md` section 1). Not started.
 
 ### Phase D — Deployment design
 
@@ -259,6 +274,14 @@ ls /dev/cu.*
 # (Locate the esptool bundled with the Espressif core.)
 ESPTOOL=$(find ~/Library/Arduino15/packages/esp32/tools/esptool_py -type f -name 'esptool*' -perm +111 | head -1)
 "$ESPTOOL" --port $PORT erase-flash
+
+# One-time: libraries and secrets
+arduino-cli lib install ArduinoJson          # 7.x; every .cpp in the sketch folder is compiled, so install it before building
+# src/street-cleaning-revealed/secrets.h (git-ignored) must define WIFI_SSID, WIFI_PASS and NWS_USER_AGENT
+# (NWS asks for a contact email in the User-Agent)
+
+# Host tests for the forecast parser (no hardware)
+cd test && make test
 ```
 
 **Power-up:** adapter first, then USB. **Power-down:** USB first, then adapter.
@@ -287,3 +310,4 @@ ESPTOOL=$(find ~/Library/Arduino15/packages/esp32/tools/esptool_py -type f -name
 - Adafruit ESP32 Feather V2 product and pinout pages (board facts: chip, flash/PSRAM, pin labels).
 - FastLED documentation and issue tracker (WS2815 support; `WS2812B` as portable choice).
 - BTF-LIGHTING product listings and packaging text (wire colors, warnings, ratings).
+- National Weather Service API (`api.weather.gov`, gridpoint `BOX/70,102`) and ArduinoJson 7.x; source selection and derived values are in `docs/weather-feed.md`.

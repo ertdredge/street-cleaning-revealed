@@ -13,11 +13,15 @@
 //   Layer 1  primitives  px(), fillStrip()
 //   Layer 2  setters     setLeft/setRight/setTop/setBottom; they set state, no LED I/O
 //   Layer 3  renderer    renderFrame(), called continuously from loop(); non-blocking
+//   Weather  a FreeRTOS task on core 0 polls the NWS forecast hourly (weather-feed, weather-forecast);
+//            the display only reads the latest snapshot, so the fetch never stalls the renderer
 //
 // Commands (manual commands use the current color and switch clock mode off):
 //   left N         light N pixels (0..90) from the bottom of the left strip
 //   right N        light N pixels (0..90) from the bottom of the right strip
-//   top S          top strip pattern, speed S in -100..100 (negative = left, 0 = frozen)
+//   precip P       force the top strip's chance of precipitation to P (0..100), then render;
+//                  `precip off` goes back to the NWS forecast. (The top strip shows the weather.)
+//   forecast       print the weather snapshot: age, and today's and tomorrow's high and precipitation
 //   bottom S       bottom strip pattern, same scale
 //   color r|g|b|w|y|c|m   set the current color (default w)
 //   bright B       set brightness, clamped to 8..48
@@ -42,6 +46,11 @@
 #include <WiFi.h>
 #include "secrets.h"            // const char* WIFI_SSID, WIFI_PASS; add to .gitignore
 #include "waste.h"               // holidays and the trash-day state (pure calendar logic)
+#include "weather-forecast.h"   // NWS forecast parser and per-day values (pure; needs the ArduinoJson library)
+#include "weather-feed.h"       // HTTPS fetch of the NWS feed (ESP32 only)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 
 #define DATA_PIN_A 27       // run A: left (90) -> top (60)
 #define DATA_PIN_B 33       // run B: bottom (60) -> right (90)
@@ -60,6 +69,17 @@ const float ANIM_MAX_PPS = 20.0f;        // pixels per second at speed +-100
 const int MARCH_THRESHOLD = 55;          // risk above this animates top and bottom
 const int MARCH_MIN_SPEED = 10;          // speed at risk = MARCH_THRESHOLD
 const int MARCH_MAX_SPEED = 100;         // speed at risk = 90
+
+// Top strip: the weather forecast (docs/Ambient-Display-Encoding.md section 3).
+const int TOP_GROUP = 20;                // three groups of 20: cold, temperate, hot
+const int TOP_PIXELS = 3 * TOP_GROUP;    // must equal STRIP_TOP.len
+const float BREATH_MAX_HZ = 0.5f;        // breathing rate at 100% chance of precipitation (2 s period)
+const uint8_t BREATH_MIN_LEVEL = 38;     // dimmest point of a breath, out of 255 (about 15%)
+const int PRECIP_MIN_PERCENT = 10;       // below this the forecast counts as dry (NWS uses 2% for "not expected"): no breathing
+const int TOMORROW_AFTER_HOUR = 17;      // from 5 pm the top strip shows tomorrow's forecast
+const uint32_t WEATHER_POLL_MS = 3600000UL;    // refresh the forecast hourly
+const uint32_t WEATHER_RETRY_MS = 300000UL;    // after a failed fetch, try again in 5 minutes
+const char* const NWS_URL = "https://api.weather.gov/gridpoints/BOX/70,102";   // Somerville (grid cell fixed at design time)
 const char* const TZ_EASTERN = "EST5EDT,M3.2.0,M11.1.0";
 const time_t CLOCK_VALID_AFTER = 1767225600;   // 2026-01-01 UTC; earlier means the clock is unset
 
@@ -79,6 +99,7 @@ struct Schedule { int wday; int nthA; int nthB; };   // wday: 0 = Sunday .. 6 = 
 struct Bar   { int n; CRGB color; };
 struct AntColors { CRGB lit; CRGB other; };   // marching pattern: "lit" ants on an "other" background
 struct March { AntColors colors; int speed; float phase; };
+struct TopState { CRGB base[TOP_PIXELS]; int breathPct; float phase; };   // base image, chance of precipitation, breath phase 0..1
 // ---- END TYPES ----
 
 // ---- Layer 1: primitives ------------------------------------------------------
@@ -142,21 +163,55 @@ time_t nextCleaningEnd(const Schedule& s, time_t now) {
   }
   return 0;
 }
+
+// ---- BEGIN WEATHER (pure) ------------------------------------------------------
+const CRGB WEATHER_COLOR_TYPICAL = CRGB(0, 72, 36);   // spring green: the temperate group
+
+// 3.1 default display: the center group is lit, the cold and hot groups are dark.
+void weatherBase(CRGB* out) {
+  for (int i = 0; i < TOP_PIXELS; i++)
+    out[i] = (i >= TOP_GROUP && i < 2 * TOP_GROUP) ? WEATHER_COLOR_TYPICAL : CRGB(0, 0, 0);
+}
+
+// Chances of precipitation below PRECIP_MIN_PERCENT are treated as 0: a static, dry display.
+int effectivePrecip(int precipPercent) {
+  return precipPercent < PRECIP_MIN_PERCENT ? 0 : constrain(precipPercent, 0, 100);
+}
+
+// 3.3 breathing rate in cycles per second: proportional to the chance of precipitation.
+float breathRateHz(int precipPercent) {
+  return BREATH_MAX_HZ * constrain(precipPercent, 0, 100) / 100.0f;
+}
+
+// Brightness 0..255 of a breath at `phase` (0..1 is one cycle): full at 0, BREATH_MIN_LEVEL at 0.5.
+uint8_t breathLevel(float phase) {
+  float w = 0.5f + 0.5f * cosf(2.0f * 3.14159265f * phase);   // 1 -> 0 -> 1
+  return (uint8_t)lroundf(BREATH_MIN_LEVEL + (255 - BREATH_MIN_LEVEL) * w);
+}
+// ---- END WEATHER ---------------------------------------------------------------
 // ---- END PURE ------------------------------------------------------------------
 
 // ---- Layer 2: setters (state only) --------------------------------------------
 
 Bar leftBar = {0, CRGB::Black}, rightBar = {0, CRGB::Black};
-March topMarch = {{CRGB::Black, CRGB::Black}, 0, 0.0f}, bottomMarch = {{CRGB::Black, CRGB::Black}, 0, 0.0f};
+March bottomMarch = {{CRGB::Black, CRGB::Black}, 0, 0.0f};
+TopState topState = { {}, 0, 0.0f };
 
 void setLeft(int n, CRGB c)  { leftBar  = { constrain(n, 0, (int)STRIP_LEFT.len),  c }; }
 void setRight(int n, CRGB c) { rightBar = { constrain(n, 0, (int)STRIP_RIGHT.len), c }; }
 // One color: the other pixels are the same color, dimmed to ANIM_DIM_LEVEL.
 AntColors antsOf(CRGB c) { CRGB dim = c; dim.nscale8_video(ANIM_DIM_LEVEL); return { c, dim }; }
 
-void setTop(const AntColors& a, int speed)    { topMarch.colors    = a; topMarch.speed    = constrain(speed, -100, 100); }
 void setBottom(const AntColors& a, int speed) { bottomMarch.colors = a; bottomMarch.speed = constrain(speed, -100, 100); }
-void setTop(CRGB c, int speed)    { setTop(antsOf(c), speed); }
+// Top strip: a TOP_PIXELS base image (see weatherBase) that breathes at breathRateHz(precipPercent).
+void setTop(const CRGB* base, int precipPercent) {
+  for (int i = 0; i < TOP_PIXELS; i++) topState.base[i] = base[i];   // not memcpy: FastLED 3.10 adds an fl::memcpy that makes the call ambiguous for CRGB
+  topState.breathPct = constrain(precipPercent, 0, 100);
+}
+void setTopDark() {
+  for (int i = 0; i < TOP_PIXELS; i++) topState.base[i] = CRGB::Black;
+  topState.breathPct = 0;
+}
 void setBottom(CRGB c, int speed) { setBottom(antsOf(c), speed); }
 
 // ---- Layer 3: renderer --------------------------------------------------------
@@ -180,18 +235,108 @@ void drawMarch(const Strip& s, const March& m) {
   }
 }
 
+void drawTop(const Strip& s, const TopState& t) {
+  uint8_t level = t.breathPct > 0 ? breathLevel(t.phase) : 255;
+  for (int i = 0; i < s.len; i++) {
+    CRGB c = t.base[i];
+    if (level < 255) c.nscale8_video(level);
+    px(s, i) = c;
+  }
+}
+
 void renderFrame() {
   uint32_t now = millis();
   if (now - lastFrameMs < FRAME_MS) return;
   float dt = (now - lastFrameMs) / 1000.0f;
   lastFrameMs = now;
-  advance(topMarch, dt);
+  topState.phase = fmodf(topState.phase + breathRateHz(topState.breathPct) * dt, 1.0f);
   advance(bottomMarch, dt);
   drawBar(STRIP_LEFT, leftBar);
   drawBar(STRIP_RIGHT, rightBar);
-  drawMarch(STRIP_TOP, topMarch);
+  drawTop(STRIP_TOP, topState);
   drawMarch(STRIP_BOTTOM, bottomMarch);
   FastLED.show();
+}
+
+// ---- Weather: forecast snapshot and its poll task ------------------------------
+WeatherForecast forecast;                  // the snapshot the display reads; guarded by forecastMutex
+SemaphoreHandle_t forecastMutex;
+volatile bool weatherUpdated = false;      // set by the poll task after a good fetch; loop() re-renders
+int precipOverride = -1;                   // serial `precip P` test override; -1 = use the forecast
+volatile int lastFetchStatus = -1;            // ForecastStatus of the last fetch, -1 = none yet (for `forecast`)
+volatile int lastFetchHttp = 0;
+volatile float lastFetchSeconds = 0.0f;
+
+TempPrecip weatherTempPrecip(ForecastDay day, time_t now) {
+  xSemaphoreTake(forecastMutex, portMAX_DELAY);
+  TempPrecip r = forecast.tempPrecip(day, now);
+  xSemaphoreGive(forecastMutex);
+  return r;
+}
+
+// Runs on core 0 so that the blocking HTTPS fetch (several seconds) never stalls the renderer
+// on core 1. Hourly after a good fetch; every 5 minutes after a failed one. A failed fetch
+// leaves the previous snapshot in place (it goes stale after 12 hours: see weather-forecast.h).
+void weatherTask(void*) {
+  WeatherForecast fetched;                 // private to this task; copied into `forecast` when good
+  int failures = 0;
+  for (;;) {
+    uint32_t waitMs = 5000;                // WiFi or clock not ready: look again shortly
+    time_t now = time(nullptr);
+    if (WiFi.status() == WL_CONNECTED && now >= CLOCK_VALID_AFTER) {
+      Serial.println("weather: fetching");
+      uint32_t t0 = millis();
+      HttpsForecastSource raw;
+      raw.open(NWS_URL, NWS_USER_AGENT);   // a failed open reads as empty, so update() reports an io error
+      DechunkingSource feed(raw);          // removes chunked transfer encoding if the server used it
+      ForecastStatus st = fetched.update(feed, now);
+      lastFetchStatus = st;
+      lastFetchHttp = raw.httpStatus();
+      lastFetchSeconds = (millis() - t0) / 1000.0f;
+      if (st == FORECAST_OK) {
+        xSemaphoreTake(forecastMutex, portMAX_DELAY);
+        forecast = fetched;
+        xSemaphoreGive(forecastMutex);
+        weatherUpdated = true;
+        failures = 0;
+        waitMs = WEATHER_POLL_MS;
+        Serial.printf("weather: forecast updated in %.1f s, free heap %u\n", lastFetchSeconds, (unsigned)ESP.getFreeHeap());
+      } else {
+        // Retry soon at first (after a boot WiFi or DNS may not be settled), then back off to the normal retry.
+        static const uint32_t BACKOFF_MS[] = { 15000UL, 30000UL, 60000UL, 120000UL };
+        waitMs = failures < 4 ? BACKOFF_MS[failures] : WEATHER_RETRY_MS;
+        failures++;
+        Serial.printf("weather: fetch failed after %.1f s (%s, http %d, free heap %u); trying again in %lu s\n",
+                      lastFetchSeconds, forecastStatusName(st), lastFetchHttp, (unsigned)ESP.getFreeHeap(),
+                      (unsigned long)(waitMs / 1000UL));
+        char shown[121];                   // what the server actually sent, to diagnose a bad body
+        size_t k = 0;
+        for (const char* h = raw.head(); *h && k < sizeof shown - 1; h++) shown[k++] = (*h >= 32 && *h < 127) ? *h : '.';
+        shown[k] = 0;
+        Serial.printf("weather: received %u bytes (%s), parsed %u; begins: \"%s\"\n", (unsigned)raw.bytesRead(),
+                      feed.chunked() ? "chunked" : "not chunked", (unsigned)feed.bytesOut(), shown);
+      }
+      raw.close();
+    }
+    vTaskDelay(pdMS_TO_TICKS(waitMs));
+  }
+}
+
+void printForecast() {
+  xSemaphoreTake(forecastMutex, portMAX_DELAY);
+  WeatherForecast snap = forecast;
+  xSemaphoreGive(forecastMutex);
+  time_t now = time(nullptr);
+  if (lastFetchStatus < 0) Serial.println("forecast: no fetch attempted yet (waiting for WiFi and the clock)");
+  else Serial.printf("forecast: last fetch %s in %.1f s, http %d\n", forecastStatusName((ForecastStatus)lastFetchStatus), (float)lastFetchSeconds, (int)lastFetchHttp);
+  Serial.printf("  wifi %s, free heap %u\n", WiFi.status() == WL_CONNECTED ? "up" : "down", (unsigned)ESP.getFreeHeap());
+  if (!snap.hasData()) { Serial.println("forecast: no good data yet"); return; }
+  Serial.printf("forecast: fetched %ld min ago\n", (long)((now - snap.lastGoodAt()) / 60));
+  for (int d = 0; d < 2; d++) {
+    TempPrecip t = snap.tempPrecip((ForecastDay)d, now);
+    if (!t.valid) { Serial.printf("  %s: no fresh data\n", d ? "tomorrow" : "today"); continue; }
+    Serial.printf("  %s: high %.1f C, precipitation %d%%\n", d ? "tomorrow" : "today", t.highC, t.precipPercent);
+  }
 }
 
 // ---- Clock-driven display -----------------------------------------------------
@@ -310,9 +455,23 @@ void updateFromClock(bool verbose) {
     int mag = MARCH_MIN_SPEED + (hi - MARCH_THRESHOLD) * (MARCH_MAX_SPEED - MARCH_MIN_SPEED) / (90 - MARCH_THRESHOLD);
     speed = (riskL > riskR) ? mag : -mag;    // left riskier -> march right (positive)
   }
-  AntColors waste = wasteCollectionColors(now);
-  setTop(waste, speed);
-  setBottom(waste, speed);
+  setBottom(wasteCollectionColors(now), speed);
+
+  // Top: the weather forecast, today's or (from 5 pm) tomorrow's. Dark when there is no fresh forecast.
+  struct tm lt;
+  localtime_r(&now, &lt);
+  ForecastDay day = lt.tm_hour >= TOMORROW_AFTER_HOUR ? FORECAST_TOMORROW : FORECAST_TODAY;
+  TempPrecip wx = weatherTempPrecip(day, now);
+  bool haveWx = wx.valid || precipOverride >= 0;
+  int rawPrecip = precipOverride >= 0 ? precipOverride : max(wx.precipPercent, 0);
+  int precip = effectivePrecip(rawPrecip);
+  if (haveWx) {
+    CRGB base[TOP_PIXELS];
+    weatherBase(base);
+    setTop(base, precip);
+  } else {
+    setTopDark();
+  }
 
   clockMode = true;
   clockRendered = true;
@@ -323,7 +482,11 @@ void updateFromClock(bool verbose) {
     Serial.printf("now %s\n", buf);
     reportSide("left ", endL, now, riskL);
     reportSide("right", endR, now, riskR);
-    Serial.printf("top/bottom speed %d\n", speed);
+    Serial.printf("bottom speed %d\n", speed);
+    if (haveWx) Serial.printf("top: %s forecast%s, precipitation %d%%, breathing %.2f Hz\n",
+                              day == FORECAST_TOMORROW ? "tomorrow's" : "today's",
+                              precipOverride >= 0 ? " (overridden)" : "", rawPrecip, breathRateHz(precip));
+    else Serial.println("top: no forecast, dark");
     const char* why = nullptr;
     WasteState ws = wasteState(now, &why);
     Serial.printf("waste: %s%s%s%s\n",
@@ -374,7 +537,7 @@ void allOff() {
   clockMode = false;
   setLeft(0, CRGB::Black);
   setRight(0, CRGB::Black);
-  setTop(CRGB::Black, 0);
+  setTopDark();
   setBottom(CRGB::Black, 0);
 }
 
@@ -386,13 +549,20 @@ void handle(String line) {
   String cmd = sp < 0 ? line : line.substring(0, sp);
   String arg = sp < 0 ? "" : line.substring(sp + 1);
   arg.trim();
-  if (cmd != "status" && cmd != "risk") { sweepActive = false; suiteActive = false; }   // any other command ends a sweep or test suite
+  if (cmd != "status" && cmd != "risk" && cmd != "precip" && cmd != "forecast") { sweepActive = false; suiteActive = false; }   // any other command ends a sweep or test suite
 
   if (cmd == "left")        { clockMode = false; setLeft(arg.toInt(), current);   Serial.printf("left %d\n", leftBar.n); }
   else if (cmd == "right")  { clockMode = false; setRight(arg.toInt(), current);  Serial.printf("right %d\n", rightBar.n); }
-  else if (cmd == "top")    { clockMode = false; setTop(current, arg.toInt());    Serial.printf("top speed %d\n", topMarch.speed); }
   else if (cmd == "bottom") { clockMode = false; setBottom(current, arg.toInt()); Serial.printf("bottom speed %d\n", bottomMarch.speed); }
   else if (cmd == "off")    { allOff(); Serial.println("off"); }
+  else if (cmd == "precip") {
+    if (arg == "off") precipOverride = -1;
+    else if (arg.length()) precipOverride = constrain(arg.toInt(), 0, 100);
+    if (precipOverride >= 0) Serial.printf("precip override %d%%\n", precipOverride);
+    else Serial.println("precip override off (using the forecast)");
+    updateFromClock(true);
+  }
+  else if (cmd == "forecast") printForecast();
   else if (cmd == "color")  {
     if (arg.length() && setColor(arg[0])) Serial.printf("color %c\n", arg[0]);
     else Serial.println("color: r g b w y c m");
@@ -442,12 +612,12 @@ void handle(String line) {
     Serial.printf("remaining %.1f h -> risk %d, color %d,%d,%d\n", r, k, c.r, c.g, c.b);
   }
   else if (cmd == "status") {
-    Serial.printf("brightness %d, color %d,%d,%d, left %d, right %d, top speed %d, bottom speed %d, clock mode %s, runs 2 x %d, pins %d and %d\n",
+    Serial.printf("brightness %d, color %d,%d,%d, left %d, right %d, top precip %d%%, bottom speed %d, clock mode %s, runs 2 x %d, pins %d and %d\n",
                   bright, current.r, current.g, current.b, leftBar.n, rightBar.n,
-                  topMarch.speed, bottomMarch.speed, clockMode ? "on" : "off",
+                  topState.breathPct, bottomMarch.speed, clockMode ? "on" : "off",
                   RUN_LEN, DATA_PIN_A, DATA_PIN_B);
   }
-  else Serial.println("commands: left N | right N | top S | bottom S | color X | bright B | off | time [YYYY-MM-DD HH:MM] | test-suite | risk H | status");
+  else Serial.println("commands: left N | right N | bottom S | precip P|off | forecast | color X | bright B | off | time [YYYY-MM-DD HH:MM] | test-suite | risk H | status");
 }
 
 String inbuf;
@@ -468,6 +638,8 @@ void setup() {
 
   WiFi.begin(WIFI_SSID, WIFI_PASS);                      // non-blocking; the renderer keeps running
   configTzTime(TZ_EASTERN, "pool.ntp.org", "time.nist.gov");
+  forecastMutex = xSemaphoreCreateMutex();
+  xTaskCreatePinnedToCore(weatherTask, "weather", 20480, nullptr, 1, nullptr, 0);   // core 0; the Arduino loop runs on core 1
   // Keep handy for testing without wifi
 //  setenv("TZ", TZ_EASTERN, 1);
 //  tzset();
@@ -490,6 +662,10 @@ void loop() {
   uint32_t every = clockRendered ? 60000 : 1000;
   if (clockMode && millis() - lastClockUpdateMs >= every) {
     lastClockUpdateMs = millis();
+    updateFromClock(false);
+  }
+  if (clockMode && weatherUpdated) {         // a new forecast arrived: show it now, not at the next minute
+    weatherUpdated = false;
     updateFromClock(false);
   }
   renderFrame();
