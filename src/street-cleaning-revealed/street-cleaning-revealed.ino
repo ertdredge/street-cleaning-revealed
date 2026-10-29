@@ -25,7 +25,7 @@
 //                  `high off` goes back to the NWS forecast.
 //   snow P IN H    pretend the forecast calls for snow: P percent chance, IN inches, accumulation
 //                  starting H hours from now (negative: already falling). Drives the snow removal
-//                  risk on one bar (see 1.2.1), the sparkle on that bar and the bottom strip, and the top sparkle. `snow off` goes back
+//                  risk on one bar (see 1.2.1), the sparkles on that bar and the bottom strip, and the top sparkle. `snow off` goes back
 //                  to the NWS forecast; `snow` alone prints the current snow event and risk.
 //   forecast       print the weather snapshot: age, and today's and tomorrow's high, precipitation and snow
 //   bottom S       bottom strip pattern, same scale
@@ -281,9 +281,9 @@ void ditherOut() {
 }
 
 bool topSparkle = false, bottomSparkle = false;     // snow: sparkle on the top / bottom strip
-bool leftSparkle = false, rightSparkle = false;     // ...and on the bar that carries the snow risk
+bool leftSparkle = false, rightSparkle = false;     // ...and on the bar that carries the snow risk, while snow is what raises it
 
-// Sparkle on the first `lit` pixels of the strip (a bar's lit part; its dark pixels stay dark).
+// Sparkle on the first `lit` pixels of the strip.
 void stepSparkle(const Strip& s, bool on, float dt, int lit) {
   for (int i = 0; i < s.len; i++) {
     float& v = sparkleOf[s.first + i];
@@ -311,8 +311,8 @@ void renderFrame() {
   drawMarch(STRIP_BOTTOM, bottomMarch);
   stepSparkle(STRIP_TOP, topSparkle, dt, STRIP_TOP.len);
   stepSparkle(STRIP_BOTTOM, bottomSparkle, dt, STRIP_BOTTOM.len);
-  stepSparkle(STRIP_LEFT, leftSparkle, dt, leftBar.n);
-  stepSparkle(STRIP_RIGHT, rightSparkle, dt, rightBar.n);
+  stepSparkle(STRIP_LEFT, leftSparkle, dt, STRIP_LEFT.len);      // the whole bar, lit or not
+  stepSparkle(STRIP_RIGHT, rightSparkle, dt, STRIP_RIGHT.len);
   ditherOut();
   FastLED.show();
 }
@@ -587,9 +587,9 @@ void updateFromClock(bool verbose) {
     speed = (riskL > riskR) ? mag : -mag;    // left riskier -> march right (positive)
   }
   setBottom(wasteCollectionColors(now), speed);
-  bottomSparkle = snowRisk > MARCH_THRESHOLD;   // 1.2: snow risk high enough to march adds a sparkle...
-  rightSparkle = bottomSparkle && snowOnRight;  // ...to the bar that carries the snow risk too
-  leftSparkle = bottomSparkle && !snowOnRight;
+  bottomSparkle = snowRisk > MARCH_THRESHOLD;   // 1.2: snow risk high enough to march adds a sparkle to the bottom strip
+  rightSparkle = snowOnRight && snowRisk > cleanR;   // and to the whole snow bar whenever snow, not street
+  leftSparkle = !snowOnRight && snowRisk > cleanL;   // cleaning, sets its risk
 
   // Top: the weather forecast, today's or (from 5 pm) tomorrow's. Dark when there is no fresh forecast.
   time_t wnow = realNow();                  // real time even while the clock is simulated
@@ -642,9 +642,9 @@ void updateFromClock(bool verbose) {
       }
     } else Serial.println("top: no forecast, dark");
     if (snow.any) {
-      Serial.printf("snow: %.1f in, %d%%, starts in %.1f h -> snow risk %d on the %s bar%s; bars show left %d, right %d; sparkle %s\n",
+      Serial.printf("snow: %.1f in, %d%%, starts in %.1f h -> snow risk %d on the %s bar%s; bars show left %d, right %d; sparkle: bottom %s, left %s, right %s\n",
                     snow.inches, snow.percent, (snow.start - now) / 3600.0f, snowRisk, snowOnRight ? "right" : "left",
-                    snowOverride.active ? " (overridden)" : "", riskL, riskR, bottomSparkle ? "on" : "off");
+                    snowOverride.active ? " (overridden)" : "", riskL, riskR, bottomSparkle ? "on" : "off", leftSparkle ? "on" : "off", rightSparkle ? "on" : "off");
     } else Serial.println("snow: none forecast");
     Serial.printf("top sparkle %s\n", topSparkle ? "on" : "off");
     const char* why = nullptr;
