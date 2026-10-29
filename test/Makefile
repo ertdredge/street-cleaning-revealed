@@ -20,15 +20,19 @@ INCLUDES       = -I$(SRC) -I$(ARDUINOJSON_DIR)
 .PHONY: all test cli deps fixtures clean
 all: test
 
-test: weather-forecast-test weather-display-test
+test: weather-forecast-test weather-display-test snow-risk-test
 	./weather-forecast-test
 	./weather-display-test
+	./snow-risk-test
 
 DISPLAY_CORE   = $(SRC)/weather-display.cpp $(SRC)/typical-highs.cpp
 DISPLAY_HDR    = $(SRC)/weather-display.h
 
 weather-display-test: weather-display-test.cpp $(DISPLAY_CORE) $(DISPLAY_HDR)
 	$(CXX) $(CXXFLAGS) -I$(SRC) -o $@ weather-display-test.cpp $(DISPLAY_CORE)
+
+snow-risk-test: snow-risk-test.cpp $(SRC)/snow-risk.cpp $(SRC)/snow-risk.h $(HEADERS)
+	$(CXX) $(CXXFLAGS) -I$(SRC) -o $@ snow-risk-test.cpp $(SRC)/snow-risk.cpp
 
 cli: weather-cli
 
@@ -48,4 +52,4 @@ fixtures:
 	ruby make-synthetic-fixtures.rb
 
 clean:
-	rm -f weather-forecast-test weather-display-test weather-cli
+	rm -f weather-forecast-test weather-display-test snow-risk-test weather-cli

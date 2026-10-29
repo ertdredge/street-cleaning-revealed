@@ -23,7 +23,11 @@
 //                  `precip off` goes back to the NWS forecast. (The top strip shows the weather.)
 //   high C         force the top strip's forecast high to C degrees Celsius, then render;
 //                  `high off` goes back to the NWS forecast.
-//   forecast       print the weather snapshot: age, and today's and tomorrow's high and precipitation
+//   snow P IN H    pretend the forecast calls for snow: P percent chance, IN inches, accumulation
+//                  starting H hours from now (negative: already falling). Drives the snow removal
+//                  risk on one bar (see 1.2.1), the sparkle on that bar and the bottom strip, and the top sparkle. `snow off` goes back
+//                  to the NWS forecast; `snow` alone prints the current snow event and risk.
+//   forecast       print the weather snapshot: age, and today's and tomorrow's high, precipitation and snow
 //   bottom S       bottom strip pattern, same scale
 //   color r|g|b|w|y|c|m   set the current color (default w)
 //   bright B       set brightness, clamped to 8..48
@@ -52,6 +56,7 @@
 #include "weather-forecast.h"   // NWS forecast parser and per-day values (pure; needs the ArduinoJson library)
 #include "weather-feed.h"       // HTTPS fetch of the NWS feed (ESP32 only)
 #include "weather-display.h"    // top strip image from the forecast high vs the typical high (pure)
+#include "snow-risk.h"          // snow removal parking risk from the NWS forecast (pure)
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -78,6 +83,9 @@ const int MARCH_MAX_SPEED = 100;         // speed at risk = 90
 const int TOP_PIXELS = TOP_STRIP_PIXELS;   // three groups of 20 (cold, temperate, hot); must equal STRIP_TOP.len
 const float BREATH_MAX_HZ = 0.5f;        // breathing rate at 100% chance of precipitation (2 s period)
 const uint8_t BREATH_MIN_LEVEL = 38;     // dimmest point of a breath, out of 255 (about 15% of the PWM level)
+const float SPARKLE_PER_SEC = 8.0f;      // snow sparkle: new flashes per second, per strip
+const float SPARKLE_SECONDS = 0.4f;      // ...each fading from white over this long
+const uint8_t SPARKLE_LEVEL = 54;        // the white of a flash: constant-luminance white (54,54,54)
 const float BREATH_GAMMA = 2.2f;         // the breath is a cosine in perceived brightness; its PWM level is that, to this power
 const int PRECIP_MIN_PERCENT = 10;       // below this the forecast counts as dry (NWS uses 2% for "not expected"): no breathing
 const int TOMORROW_AFTER_HOUR = 17;      // from 5 pm the top strip shows tomorrow's forecast
@@ -98,6 +106,7 @@ const Strip STRIP_RIGHT  = {210, 90 };   // run B, bottom -> top
 // breath gain at higher precision and writes the 8-bit result into `leds`, which FastLED sends out.
 CRGB canvas[NUM_LEDS];
 CRGB leds[NUM_LEDS];
+float sparkleOf[NUM_LEDS];               // snow sparkle: 1 = a white flash just started, fades to 0
 float gainOf[NUM_LEDS];                  // per-pixel multiplier 0..1 (the top strip's breath), reset every frame
 float residual[NUM_LEDS][3];             // dithering: the fraction of an output step not yet sent, per channel
 uint8_t bright = 32;                     // global brightness 0..255, applied in ditherOut (FastLED's own is left at 255)
@@ -257,7 +266,8 @@ void ditherOut() {
     const uint8_t in[3] = { canvas[i].r, canvas[i].g, canvas[i].b };
     uint8_t out[3];
     for (int c = 0; c < 3; c++) {
-      float v = in[c] * gainOf[i] * scale;
+      float sp = sparkleOf[i];
+      float v = (in[c] * gainOf[i] * (1.0f - sp) + SPARKLE_LEVEL * sp) * scale;
       if (v <= 0.0f) { residual[i][c] = 0.0f; out[c] = 0; continue; }
       float t = v + residual[i][c];
       int o = (int)t;                      // t >= 0
@@ -268,6 +278,23 @@ void ditherOut() {
     }
     leds[i] = CRGB(out[0], out[1], out[2]);
   }
+}
+
+bool topSparkle = false, bottomSparkle = false;     // snow: sparkle on the top / bottom strip
+bool leftSparkle = false, rightSparkle = false;     // ...and on the bar that carries the snow risk
+
+// Sparkle on the first `lit` pixels of the strip (a bar's lit part; its dark pixels stay dark).
+void stepSparkle(const Strip& s, bool on, float dt, int lit) {
+  for (int i = 0; i < s.len; i++) {
+    float& v = sparkleOf[s.first + i];
+    v -= dt / SPARKLE_SECONDS;
+    if (v < 0.0f || i >= lit) v = 0.0f;
+  }
+  if (!on || lit <= 0) return;
+  float expect = SPARKLE_PER_SEC * dt;
+  int n = (int)expect;
+  if (random(10000) < (long)((expect - n) * 10000.0f)) n++;
+  for (int k = 0; k < n; k++) sparkleOf[s.first + random(lit)] = 1.0f;
 }
 
 void renderFrame() {
@@ -282,6 +309,10 @@ void renderFrame() {
   drawBar(STRIP_RIGHT, rightBar);
   drawTop(STRIP_TOP, topState);
   drawMarch(STRIP_BOTTOM, bottomMarch);
+  stepSparkle(STRIP_TOP, topSparkle, dt, STRIP_TOP.len);
+  stepSparkle(STRIP_BOTTOM, bottomSparkle, dt, STRIP_BOTTOM.len);
+  stepSparkle(STRIP_LEFT, leftSparkle, dt, leftBar.n);
+  stepSparkle(STRIP_RIGHT, rightSparkle, dt, rightBar.n);
   ditherOut();
   FastLED.show();
 }
@@ -358,6 +389,37 @@ void weatherTask(void*) {
   }
 }
 
+// `snow P IN H` serial override of the snow forecast (start is an absolute time on the system clock,
+// so a `time` sweep moves through it).
+struct SnowOverride { bool active; int percent; float inches; time_t start; };
+SnowOverride snowOverride = { false, 0, 0.0f, 0 };
+
+// The snow forecast the bars use: the override, else the NWS forecast for today and tomorrow. While
+// the clock is simulated (time, sweep, test-suite) the real forecast is left out, so a real storm
+// does not leak into the simulated dates.
+SnowEvent currentSnowEvent() {
+  if (snowOverride.active) {
+    SnowEvent e = { snowOverride.inches > 0.0f, snowOverride.inches, snowOverride.percent, snowOverride.start };
+    return e;
+  }
+  SnowEvent none = { false, 0.0f, 0, 0 };
+  if (simClockOffset != 0) return none;
+  time_t wn = realNow();
+  xSemaphoreTake(forecastMutex, portMAX_DELAY);
+  SnowEvent e = snowEventFrom(forecast.snow(FORECAST_TODAY, wn), forecast.snow(FORECAST_TOMORROW, wn));
+  xSemaphoreGive(forecastMutex);
+  return e;
+}
+
+// 3.3.1: snow on the day the top strip shows.
+bool topSnowForecast(ForecastDay day, time_t wnow) {
+  if (snowOverride.active) return snowOverride.inches > 0.0f;
+  xSemaphoreTake(forecastMutex, portMAX_DELAY);
+  bool r = forecast.snow(day, wnow).snowForecast();
+  xSemaphoreGive(forecastMutex);
+  return r;
+}
+
 // Typical high (deg C) for the calendar date `dayOffset` days after the one containing `now`.
 float typicalHighForDay(time_t now, int dayOffset) {
   struct tm t;
@@ -385,6 +447,14 @@ void printForecast() {
     float typical = typicalHighForDay(now, d);
     Serial.printf("  %s: high %.1f C (typical %.1f C, %+.1f), precipitation %d%%\n", d ? "tomorrow" : "today",
                   t.highC, typical, t.highC - typical, t.precipPercent);
+    SnowOutlook sn = snap.snow((ForecastDay)d, now);
+    if (sn.snowForecast()) {
+      char when[40];
+      fmtTime(sn.startTime, when, sizeof when);
+      Serial.printf("    snow: %.1f in, %d%%, starting %s\n", sn.amountInches(), sn.probabilityPercent, when);
+    } else {
+      Serial.println("    snow: none");
+    }
   }
 }
 
@@ -497,6 +567,16 @@ void updateFromClock(bool verbose) {
   // end == 0 (nothing found) must read as "far away", not as a huge negative remaining time
   int riskL = riskFromHours(endL ? (int64_t)(endL - now) / 3600.0f : 504.0f);
   int riskR = riskFromHours(endR ? (int64_t)(endR - now) / 3600.0f : 504.0f);
+  int cleanL = riskL, cleanR = riskR;      // street cleaning alone, for the report
+  // 1.2: a forecast snowstorm puts the side where parking is banned during an emergency (alternating
+  // by winter) at the snow risk, if that is higher than its cleaning risk. The other side is unaffected.
+  struct tm nt;
+  localtime_r(&now, &nt);
+  bool snowOnRight = snowRiskOnRightBar(nt.tm_year + 1900, nt.tm_mon + 1);
+  SnowEvent snow = currentSnowEvent();
+  int snowRisk = snow.any ? snowRiskFrom(snow, riskFromHours((int64_t)(snow.start - now) / 3600.0f)) : 0;
+  if (snowOnRight) riskR = max(riskR, snowRisk);
+  else             riskL = max(riskL, snowRisk);
   setLeft(riskL, riskColor(riskL));
   setRight(riskR, riskColor(riskR));
 
@@ -507,6 +587,9 @@ void updateFromClock(bool verbose) {
     speed = (riskL > riskR) ? mag : -mag;    // left riskier -> march right (positive)
   }
   setBottom(wasteCollectionColors(now), speed);
+  bottomSparkle = snowRisk > MARCH_THRESHOLD;   // 1.2: snow risk high enough to march adds a sparkle...
+  rightSparkle = bottomSparkle && snowOnRight;  // ...to the bar that carries the snow risk too
+  leftSparkle = bottomSparkle && !snowOnRight;
 
   // Top: the weather forecast, today's or (from 5 pm) tomorrow's. Dark when there is no fresh forecast.
   time_t wnow = realNow();                  // real time even while the clock is simulated
@@ -531,6 +614,7 @@ void updateFromClock(bool verbose) {
     setTopDark();
   }
 
+  topSparkle = topSnowForecast(day, wnow);      // 3.3.1: any snow forecast for the displayed day
   clockMode = true;
   clockRendered = true;
   lastClockUpdateMs = millis();
@@ -538,8 +622,8 @@ void updateFromClock(bool verbose) {
     char buf[40];
     fmtTime(now, buf, sizeof buf);
     Serial.printf("now %s\n", buf);
-    reportSide("left ", endL, now, riskL);
-    reportSide("right", endR, now, riskR);
+    reportSide("left ", endL, now, cleanL);
+    reportSide("right", endR, now, cleanR);
     Serial.printf("bottom speed %d\n", speed);
     if (haveWx) {
       Serial.printf("top: %s forecast, precipitation %d%%%s, breathing %.2f Hz\n",
@@ -557,6 +641,12 @@ void updateFromClock(bool verbose) {
         Serial.println("top: no forecast high, default display");
       }
     } else Serial.println("top: no forecast, dark");
+    if (snow.any) {
+      Serial.printf("snow: %.1f in, %d%%, starts in %.1f h -> snow risk %d on the %s bar%s; bars show left %d, right %d; sparkle %s\n",
+                    snow.inches, snow.percent, (snow.start - now) / 3600.0f, snowRisk, snowOnRight ? "right" : "left",
+                    snowOverride.active ? " (overridden)" : "", riskL, riskR, bottomSparkle ? "on" : "off");
+    } else Serial.println("snow: none forecast");
+    Serial.printf("top sparkle %s\n", topSparkle ? "on" : "off");
     const char* why = nullptr;
     WasteState ws = wasteState(now, &why);
     Serial.printf("waste: %s%s%s%s\n",
@@ -618,7 +708,7 @@ void handle(String line) {
   String cmd = sp < 0 ? line : line.substring(0, sp);
   String arg = sp < 0 ? "" : line.substring(sp + 1);
   arg.trim();
-  if (cmd != "status" && cmd != "risk" && cmd != "precip" && cmd != "high" && cmd != "forecast") { sweepActive = false; suiteActive = false; }   // any other command ends a sweep or test suite
+  if (cmd != "status" && cmd != "risk" && cmd != "precip" && cmd != "high" && cmd != "snow" && cmd != "forecast") { sweepActive = false; suiteActive = false; }   // any other command ends a sweep or test suite
 
   if (cmd == "left")        { clockMode = false; setLeft(arg.toInt(), current);   Serial.printf("left %d\n", leftBar.n); }
   else if (cmd == "right")  { clockMode = false; setRight(arg.toInt(), current);  Serial.printf("right %d\n", rightBar.n); }
@@ -636,6 +726,23 @@ void handle(String line) {
     else if (arg.length()) highOverride = constrain(arg.toFloat(), -60.0f, 60.0f);
     if (!std::isnan(highOverride)) Serial.printf("high override %.1f C\n", highOverride);
     else Serial.println("high override off (using the forecast)");
+    updateFromClock(true);
+  }
+  else if (cmd == "snow") {
+    if (arg == "off") { snowOverride.active = false; Serial.println("snow override off (using the forecast)"); }
+    else if (arg.length()) {
+      int p; float inches, hours;
+      if (sscanf(arg.c_str(), "%d %f %f", &p, &inches, &hours) != 3) {
+        Serial.println("usage: snow PERCENT INCHES HOURS   (HOURS until the snow starts, negative if already falling) | snow off");
+        return;
+      }
+      snowOverride.active = true;
+      snowOverride.percent = constrain(p, 0, 100);
+      snowOverride.inches = constrain(inches, 0.0f, 60.0f);
+      snowOverride.start = time(nullptr) + (time_t)(constrain(hours, -48.0f, 504.0f) * 3600.0f);
+      Serial.printf("snow override: %d%%, %.1f in, starting in %.1f h\n", snowOverride.percent, snowOverride.inches,
+                    constrain(hours, -48.0f, 504.0f));
+    }
     updateFromClock(true);
   }
   else if (cmd == "forecast") printForecast();
@@ -692,7 +799,7 @@ void handle(String line) {
                   topState.breathPct, bottomMarch.speed, clockMode ? "on" : "off",
                   RUN_LEN, DATA_PIN_A, DATA_PIN_B);
   }
-  else Serial.println("commands: left N | right N | bottom S | precip P|off | high C|off | forecast | color X | bright B | off | time [YYYY-MM-DD HH:MM] | test-suite | risk H | status");
+  else Serial.println("commands: left N | right N | bottom S | precip P|off | high C|off | snow P IN H|off | forecast | color X | bright B | off | time [YYYY-MM-DD HH:MM] | test-suite | risk H | status");
 }
 
 String inbuf;

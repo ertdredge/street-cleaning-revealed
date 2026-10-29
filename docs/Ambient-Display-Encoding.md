@@ -39,6 +39,19 @@ If $percent$ is 100% and $inches$ forecast is >=4 we use determine risk with the
 
 If inches forecast is < 4 then the risk function result is multiplied by $\frac{inches}{4}$. If $percent$ is less than 100% then the risk function result is multipled by $percent$.
 
+If the risk function output is high enough to result in marching animation of the bottom LED strip due to snow forecast, a sparkle animation is added to the marching animation: Throughout the bottom LED strip pixels, with random pixels briefly flashing white.
+
+#### 1.2.1 Details
+
+- Only the NWS forecast is used; the start of an actual city snow emergency is not (yet).
+- The forecast covers today and tomorrow. Their snow amounts are added together (the feed splits a storm that crosses midnight across the two days), the larger probability proxy is used, and the earliest start time is used. Trace snow is ignored.
+- "Multiplied by $percent$" means by $percent / 100$. The two reductions combine: 2 inches at 50% gives $risk \times \frac{2}{4} \times 0.5$.
+- During a snow emergency parking is allowed on only one side of the street: the left side when winter begins in an even-numbered year (winter 2026/27), the right side when it begins in an odd-numbered year (2027/28), alternating every year. The snow risk therefore applies to the *other* bar only, the bar for the side where parking is banned: the right bar from mid-2026 to mid-2027, the left bar from mid-2027 to mid-2028, and so on. That bar shows the larger of its street cleaning risk and the snow risk; the other bar is unaffected by snow. A winter begins on July 1 (`SNOW_YEAR_START_MONTH`).
+- The parking risk does not depend on which day the top strip is showing: it uses the hours until the forecast snow starts (today's and tomorrow's forecasts together, at any time of day).
+- A sparkle (random pixels briefly flashing white, as in 3.3.1) appears on the bottom strip *and* on the bar that carries the snow risk when the snow risk is above 55, the marching threshold, whether or not the pattern is moving. On the bar only the lit pixels sparkle, so the height stays readable. The other bar does not sparkle. The pattern marches away from the riskier side, so a snow risk above the other bar's risk makes it march away from the snow bar.
+- Snow that has already started has $remaining = 0$, so the risk is 90. The forecast cannot tell when a storm ends within a day, so the risk persists until that day's total drops out of the forecast at local midnight.
+- While the clock is simulated (`time`, sweeps, `test-suite`) the real forecast is left out of the bars. The `snow` serial command always applies.
+
 ---
 
 ## 2. Bottom
@@ -150,6 +163,8 @@ If *any* precipitation is forecast for today, all illuminated pixels in the top 
 #### 3.3.1 Snow or sleet
 
 If any snow or sleet accumulation is forecast for today, a sparkle animation is added throughout the top LED strip pixels, with random pixels briefly flashing white.
+
+The top strip always represents today's forecast from midnight until 5pm and tomorrow's from 5pm until midnight (3.4.2), and this sparkle follows that forecast day. (The parking risk is different: it is driven by the hours until the snow is forecast to start, whichever day that is, and has its own sparkle; see 1.2.1.) The feed reports snow accumulation but not sleet, so any measurable forecast snow accumulation triggers it. A flash is full white (54, 54, 54, the luminance-matched white) and fades over 0.4 s; about 8 flashes start per second across the strip (`SPARKLE_PER_SEC`, `SPARKLE_SECONDS`).
 
 ### 3.4 Update frequency
 
