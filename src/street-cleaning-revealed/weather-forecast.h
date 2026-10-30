@@ -25,7 +25,7 @@
 //   high           the maxTemperature interval that starts that day
 //   precip         the largest probability among the intervals that overlap that day
 //   snow amount    the sum of the hourly amounts inside that day (a storm crossing midnight is
-//                  split between the two days; add today + tomorrow in the sketch for a storm total)
+//                  split between the two days; add consecutive days in the sketch for a storm total)
 //   snow start     the first hour inside that day with measurable snow (an accumulation that began
 //                  yesterday and continues reports midnight)
 //   snow prob      NWS publishes no probability of snow accumulation, so this is a PROXY: the
@@ -47,8 +47,8 @@
 // snapshot in place and returns the reason. The snapshot stays usable for
 // ForecastConfig::staleAfterSeconds (default 12 hours) after the last good update; after that the
 // accessors return valid == false so the display can show "no data" instead of an old forecast.
-// The snapshot remembers three local days, so "today" and "tomorrow" stay correct across midnight
-// even if the next fetch has not succeeded yet.
+// The snapshot remembers five local days (today through day 4), so the four days the sketch reads
+// (FORECAST_DAYS_USED) stay correct across midnight even if the next fetch has not succeeded yet.
 //
 // ---- Usage in the sketch (sketch-side code; this is an outline, not compiled here) -----------
 //   #include "weather-forecast.h"
@@ -92,7 +92,10 @@
 // The city may declare a parking snow emergency when 4 or more inches are forecast.
 const float SNOW_EMERGENCY_MM = 101.6f;
 
-enum ForecastDay { FORECAST_TODAY = 0, FORECAST_TOMORROW = 1 };
+// Local calendar days counted from the day containing `now`. The snow risk reads all four, so that at
+// least 72 hours of forecast are always included.
+enum ForecastDay { FORECAST_TODAY = 0, FORECAST_TOMORROW = 1, FORECAST_DAY_2 = 2, FORECAST_DAY_3 = 3 };
+const int FORECAST_DAYS_USED = 4;
 
 enum ForecastStatus {
   FORECAST_OK,
@@ -199,7 +202,8 @@ struct ForecastDayData {
   int    snowProb;
   time_t snowStart;    // 0 when none
 };
-const int FORECAST_STORED_DAYS = 3;   // today, tomorrow, and the day after (rides over a midnight gap)
+const int FORECAST_STORED_DAYS = 5;   // today through day 4: one more than FORECAST_DAYS_USED, so the four used days
+                                      // are still all held for the hour after local midnight until the next fetch
 
 class WeatherForecast {
  public:

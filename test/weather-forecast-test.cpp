@@ -69,7 +69,11 @@ static void testRealCapture() {
   CHECK_NEAR(t.highC, 20.0, 0.001);             // 68 F
   CHECK(t.precipPercent == 2);
 
-  for (int d = 0; d < 2; d++) {                  // no snow in the forecast
+  for (int d = 2; d < FORECAST_DAYS_USED; d++) {   // the later days the snow risk reads are held too
+    t = wf.tempPrecip((ForecastDay)d, NOW);
+    CHECK(t.valid && !std::isnan(t.highC) && t.precipPercent >= 0);
+  }
+  for (int d = 0; d < FORECAST_DAYS_USED; d++) {   // no snow in the forecast
     SnowOutlook s = wf.snow((ForecastDay)d, NOW);
     CHECK(s.valid);
     CHECK_NEAR(s.amountMm, 0.0, 1e-6);

@@ -1,18 +1,27 @@
 #include "snow-risk.h"
 #include <math.h>
 
-SnowEvent snowEventFrom(const SnowOutlook& today, const SnowOutlook& tomorrow) {
-  SnowEvent e = { false, 0.0f, 0, 0 };
-  const SnowOutlook* d[2] = { &today, &tomorrow };
-  for (int i = 0; i < 2; i++) {
-    if (!d[i]->snowForecast()) continue;
-    e.any = true;
-    e.inches += d[i]->amountInches();
-    if (d[i]->probabilityPercent > e.percent) e.percent = d[i]->probabilityPercent;
-    if (e.start == 0 || d[i]->startTime < e.start) e.start = d[i]->startTime;
+int snowEventsFrom(const SnowOutlook* days, int n, SnowEvent* out, int maxOut) {
+  int count = 0;
+  bool open = false;                                  // inside a run of snowy days
+  for (int i = 0; i < n; i++) {
+    if (!days[i].snowForecast()) { open = false; continue; }
+    if (!open) {
+      if (count >= maxOut) break;
+      out[count].any = true;
+      out[count].inches = 0.0f;
+      out[count].percent = 0;
+      out[count].start = days[i].startTime;
+      count++;
+      open = true;
+    }
+    SnowEvent& e = out[count - 1];
+    e.inches += days[i].amountInches();
+    if (days[i].probabilityPercent > e.percent) e.percent = days[i].probabilityPercent;
+    if (days[i].startTime < e.start) e.start = days[i].startTime;
+    if (e.percent > 100) e.percent = 100;
   }
-  if (e.percent > 100) e.percent = 100;
-  return e;
+  return count;
 }
 
 bool snowRiskOnRightBar(int year, int month) {

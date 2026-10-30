@@ -394,21 +394,27 @@ void weatherTask(void*) {
 struct SnowOverride { bool active; int percent; float inches; time_t start; };
 SnowOverride snowOverride = { false, 0, 0.0f, 0 };
 
-// The snow forecast the bars use: the override, else the NWS forecast for today and tomorrow. While
-// the clock is simulated (time, sweep, test-suite) the real forecast is left out, so a real storm
-// does not leak into the simulated dates.
-SnowEvent currentSnowEvent() {
+// The snow events the bars use, earliest first (at most two fit in four days): the override, else the
+// NWS forecast for today and the next three days (at least 72 hours). While the clock is simulated
+// (time, sweep, test-suite) the real forecast is left out, so a real storm does not leak into the
+// simulated dates.
+const int MAX_SNOW_EVENTS = 4;
+int currentSnowEvents(SnowEvent* out, int maxOut) {   // (a plain pointer: the generated prototype comes before MAX_SNOW_EVENTS)
   if (snowOverride.active) {
-    SnowEvent e = { snowOverride.inches > 0.0f, snowOverride.inches, snowOverride.percent, snowOverride.start };
-    return e;
+    if (snowOverride.inches <= 0.0f) return 0;
+    out[0].any = true;
+    out[0].inches = snowOverride.inches;
+    out[0].percent = snowOverride.percent;
+    out[0].start = snowOverride.start;
+    return 1;
   }
-  SnowEvent none = { false, 0.0f, 0, 0 };
-  if (simClockOffset != 0) return none;
+  if (simClockOffset != 0) return 0;
   time_t wn = realNow();
+  SnowOutlook days[FORECAST_DAYS_USED];
   xSemaphoreTake(forecastMutex, portMAX_DELAY);
-  SnowEvent e = snowEventFrom(forecast.snow(FORECAST_TODAY, wn), forecast.snow(FORECAST_TOMORROW, wn));
+  for (int d = 0; d < FORECAST_DAYS_USED; d++) days[d] = forecast.snow((ForecastDay)d, wn);
   xSemaphoreGive(forecastMutex);
-  return e;
+  return snowEventsFrom(days, FORECAST_DAYS_USED, out, maxOut);
 }
 
 // 3.3.1: snow on the day the top strip shows.
@@ -441,11 +447,12 @@ void printForecast() {
   Serial.printf("  wifi %s, free heap %u\n", WiFi.status() == WL_CONNECTED ? "up" : "down", (unsigned)ESP.getFreeHeap());
   if (!snap.hasData()) { Serial.println("forecast: no good data yet"); return; }
   Serial.printf("forecast: fetched %ld min ago\n", (long)((now - snap.lastGoodAt()) / 60));
-  for (int d = 0; d < 2; d++) {
+  static const char* const DAY_NAMES[FORECAST_DAYS_USED] = { "today", "tomorrow", "day 2", "day 3" };
+  for (int d = 0; d < FORECAST_DAYS_USED; d++) {
     TempPrecip t = snap.tempPrecip((ForecastDay)d, now);
-    if (!t.valid) { Serial.printf("  %s: no fresh data\n", d ? "tomorrow" : "today"); continue; }
+    if (!t.valid) { Serial.printf("  %s: no fresh data\n", DAY_NAMES[d]); continue; }
     float typical = typicalHighForDay(now, d);
-    Serial.printf("  %s: high %.1f C (typical %.1f C, %+.1f), precipitation %d%%\n", d ? "tomorrow" : "today",
+    Serial.printf("  %s: high %.1f C (typical %.1f C, %+.1f), precipitation %d%%\n", DAY_NAMES[d],
                   t.highC, typical, t.highC - typical, t.precipPercent);
     SnowOutlook sn = snap.snow((ForecastDay)d, now);
     if (sn.snowForecast()) {
@@ -573,8 +580,14 @@ void updateFromClock(bool verbose) {
   struct tm nt;
   localtime_r(&now, &nt);
   bool snowOnRight = snowRiskOnRightBar(nt.tm_year + 1900, nt.tm_mon + 1);
-  SnowEvent snow = currentSnowEvent();
-  int snowRisk = snow.any ? snowRiskFrom(snow, riskFromHours((int64_t)(snow.start - now) / 3600.0f)) : 0;
+  SnowEvent events[MAX_SNOW_EVENTS];
+  int nEvents = currentSnowEvents(events, MAX_SNOW_EVENTS);
+  SnowEvent snow = { false, 0.0f, 0, 0 };               // the event with the highest risk
+  int snowRisk = 0;
+  for (int i = 0; i < nEvents; i++) {
+    int r = snowRiskFrom(events[i], riskFromHours((int64_t)(events[i].start - now) / 3600.0f));
+    if (i == 0 || r > snowRisk) { snowRisk = r; snow = events[i]; }
+  }
   if (snowOnRight) riskR = max(riskR, snowRisk);
   else             riskL = max(riskL, snowRisk);
   setLeft(riskL, riskColor(riskL));

@@ -105,9 +105,9 @@ bool getSeries(JsonVariantConst props, const char* name, JsonArrayConst* values,
 
 // A precipitation-probability interval, in seconds relative to the start of today.
 struct PopInterval { int32_t s, e; int16_t pct; };
-const int MAX_POP = 96;     // three days of hourly intervals is 72; anything beyond is ignored
+const int MAX_POP = 144;    // five days of hourly intervals is 120; anything beyond is ignored
 
-// The feed is parsed into `out` (three local days from `now`). Nothing is written to the caller's
+// The feed is parsed into `out` (five local days from `now`). Nothing is written to the caller's
 // snapshot here; update() decides whether to keep the result.
 ForecastStatus parseFeed(ForecastSource& src, time_t now, const ForecastConfig& cfg,
                          ForecastDayData out[FORECAST_STORED_DAYS], time_t* feedUpdated) {

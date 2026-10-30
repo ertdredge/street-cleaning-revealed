@@ -111,5 +111,7 @@ int main(int argc, char** argv) {
   printf("\n");
   printDay("today", wf, FORECAST_TODAY, now);
   printDay("tomorrow", wf, FORECAST_TOMORROW, now);
+  printDay("day 2", wf, FORECAST_DAY_2, now);
+  printDay("day 3", wf, FORECAST_DAY_3, now);
   return 0;
 }

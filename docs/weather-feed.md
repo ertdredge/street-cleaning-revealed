@@ -123,7 +123,7 @@ $$
 
 An hour of **trace** snow is ignored: an interval counts only if its rate is at least 0.25 mm per hour (about 0.01 inch). Reported in mm, with an inches accessor, 25.4 mm to the inch.
 
-A storm that crosses midnight is split between its two days. The storm total is the sum of today and tomorrow, which the display logic can form; the per-day split keeps each value attributable to one calendar day.
+A storm that crosses midnight is split between its two days. The storm total is the sum over consecutive snowy days, which the display logic forms (`snow-risk.cpp`); the per-day split keeps each value attributable to one calendar day.
 
 ### 4.4 Snow start time
 
@@ -167,7 +167,7 @@ A failure of any kind **never discards good data**. The previous snapshot stays 
 
 The snapshot **expires 12 hours after the last good update**; after that every accessor reports "no valid data", so the display shows a visible no-data state and never an old forecast presented as current.
 
-The snapshot holds three local days (today, tomorrow, the day after), so that "today" and "tomorrow" remain correct after midnight even when the first fetch of the new day has not yet succeeded.
+The snapshot holds five local days (today through day 4). The sketch reads the first four (`FORECAST_DAYS_USED`, giving the snow risk at least 72 hours of look-ahead) and the fifth keeps all four correct after midnight even when the first fetch of the new day has not yet succeeded.
 
 ---
 

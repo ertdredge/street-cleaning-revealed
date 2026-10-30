@@ -12,18 +12,31 @@ static SnowOutlook day(bool valid, float inches, int pct, time_t start) {
 
 int main() {
   SnowOutlook none = day(true, 0, 0, 0), stale = day(false, 6, 100, 1000);
+  SnowEvent ev[4];
+  SnowOutlook w[4];
 
-  SnowEvent e = snowEventFrom(none, none);
-  CHECK(!e.any && snowRiskFrom(e, 90) == 0);
-  e = snowEventFrom(stale, stale);                         // no fresh data: no snow
-  CHECK(!e.any);
+  w[0] = none; w[1] = none; w[2] = none; w[3] = none;
+  CHECK(snowEventsFrom(w, 4, ev, 4) == 0);
+  w[0] = stale; w[1] = stale; w[2] = stale; w[3] = stale;      // no fresh data: no snow
+  CHECK(snowEventsFrom(w, 4, ev, 4) == 0);
 
-  e = snowEventFrom(none, day(true, 6, 100, 5000));        // tomorrow only
-  CHECK(e.any && fabsf(e.inches - 6) < 0.01f && e.percent == 100 && e.start == 5000);
-  e = snowEventFrom(day(true, 3, 80, 2000), day(true, 3, 100, 90000));   // storm across midnight: add up
-  CHECK(e.any && fabsf(e.inches - 6) < 0.01f && e.percent == 100 && e.start == 2000);
-  e = snowEventFrom(stale, day(true, 2, 50, 7000));
-  CHECK(e.any && fabsf(e.inches - 2) < 0.01f && e.percent == 50 && e.start == 7000);
+  w[0] = none; w[1] = day(true, 6, 100, 5000); w[2] = none; w[3] = none;     // tomorrow only
+  CHECK(snowEventsFrom(w, 4, ev, 4) == 1);
+  CHECK(ev[0].any && fabsf(ev[0].inches - 6) < 0.01f && ev[0].percent == 100 && ev[0].start == 5000);
+  w[0] = day(true, 3, 80, 2000); w[1] = day(true, 3, 100, 90000);           // storm across midnight: add up
+  CHECK(snowEventsFrom(w, 4, ev, 4) == 1);
+  CHECK(fabsf(ev[0].inches - 6) < 0.01f && ev[0].percent == 100 && ev[0].start == 2000);
+  w[0] = stale; w[1] = day(true, 2, 50, 7000); w[2] = none; w[3] = none;
+  CHECK(snowEventsFrom(w, 4, ev, 4) == 1 && fabsf(ev[0].inches - 2) < 0.01f && ev[0].percent == 50 && ev[0].start == 7000);
+  w[0] = none; w[1] = none; w[2] = none; w[3] = day(true, 5, 90, 300000);   // three days out: seen
+  CHECK(snowEventsFrom(w, 4, ev, 4) == 1 && ev[0].start == 300000 && fabsf(ev[0].inches - 5) < 0.01f);
+  w[0] = day(true, 1, 40, 1000); w[1] = none; w[2] = none; w[3] = day(true, 5, 90, 300000);   // separate storms
+  CHECK(snowEventsFrom(w, 4, ev, 4) == 2);
+  CHECK(ev[0].start == 1000 && fabsf(ev[0].inches - 1) < 0.01f && ev[0].percent == 40);
+  CHECK(ev[1].start == 300000 && fabsf(ev[1].inches - 5) < 0.01f && ev[1].percent == 90);
+  CHECK(snowEventsFrom(w, 4, ev, 1) == 1 && ev[0].start == 1000);           // output limit respected
+  w[0] = none; w[1] = day(true, 1, 40, 5), w[2] = day(true, 2, 70, 6); w[3] = day(true, 3, 60, 7);   // a three-day storm
+  CHECK(snowEventsFrom(w, 4, ev, 4) == 1 && fabsf(ev[0].inches - 6) < 0.01f && ev[0].percent == 70 && ev[0].start == 5);
 
   // 1.2: 100% and >= 4 in -> the base risk unchanged
   SnowEvent big = { true, 6.0f, 100, 1 };
