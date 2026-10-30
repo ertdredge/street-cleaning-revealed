@@ -102,7 +102,8 @@ enum ForecastStatus {
   FORECAST_IO_ERROR,      // the source could not be opened, or delivered no bytes
   FORECAST_PARSE_ERROR,   // not valid JSON: truncated, an HTML error page, chunked-encoding debris
   FORECAST_SCHEMA_ERROR,  // valid JSON, but required series or units are missing or unexpected
-  FORECAST_NO_MEMORY      // ArduinoJson could not allocate
+  FORECAST_NO_MEMORY,     // ArduinoJson could not allocate
+  FORECAST_NO_CURRENT_DATA  // a valid feed with nothing for today or tomorrow: `now` is far from the feed's dates (a wrong clock)
 };
 
 // Short lowercase name for logging: "ok", "io error", "parse error", "schema error", "no memory".

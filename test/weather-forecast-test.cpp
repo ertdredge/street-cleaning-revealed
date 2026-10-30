@@ -337,6 +337,19 @@ static void testChunkedTransfer() {
   }
 }
 
+// A clock that is wrong by weeks (as after a simulated date is left behind) must not wipe a good snapshot.
+static void testWrongClock() {
+  printf("wrong clock\n");
+  WeatherForecast wf;
+  CHECK_STATUS(load(wf, RAW, NOW), FORECAST_OK);
+  WeatherForecast other;
+  CHECK_STATUS(load(other, RAW, NOW - 43 * 86400L), FORECAST_NO_CURRENT_DATA);
+  CHECK(!other.hasData());
+  CHECK_STATUS(load(other, RAW, NOW + 43 * 86400L), FORECAST_NO_CURRENT_DATA);
+  CHECK_STATUS(load(wf, RAW, NOW - 43 * 86400L), FORECAST_NO_CURRENT_DATA);      // the good snapshot stays
+  CHECK(wf.tempPrecip(FORECAST_TODAY, NOW).valid);
+}
+
 int main() {
   setenv("TZ", "EST5EDT,M3.2.0,M11.1.0", 1);                    // the same rule the sketch uses
   tzset();
@@ -351,6 +364,7 @@ int main() {
   testTodaysHighCarriedForward();
   testDstFallBack();
   testChunkedTransfer();
+  testWrongClock();
   printf("\n%d checks, %d failed\n", checks, failures);
   return failures ? 1 : 0;
 }

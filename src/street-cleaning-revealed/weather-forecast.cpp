@@ -222,6 +222,11 @@ ForecastStatus parseFeed(ForecastSource& src, time_t now, const ForecastConfig& 
       }
     }
   }
+  // A feed that is fine but shows nothing for today or tomorrow means `now` is far from the feed's
+  // dates (a wrong clock). Reject it rather than replace a good snapshot with an empty one.
+  bool any = false;
+  for (int i = 0; i < 2; i++) if (!std::isnan(out[i].highC) || out[i].precip >= 0 || out[i].snowStart != 0) any = true;
+  if (!any) return FORECAST_NO_CURRENT_DATA;
   return FORECAST_OK;
 }
 
@@ -234,6 +239,7 @@ const char* forecastStatusName(ForecastStatus s) {
     case FORECAST_PARSE_ERROR:  return "parse error";
     case FORECAST_SCHEMA_ERROR: return "schema error";
     case FORECAST_NO_MEMORY:    return "no memory";
+    case FORECAST_NO_CURRENT_DATA: return "no data for today or tomorrow (wrong clock?)";
   }
   return "?";
 }

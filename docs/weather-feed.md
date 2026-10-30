@@ -167,6 +167,7 @@ Each fetch has exactly one outcome:
 | Parse error | The body is not a JSON object: truncated, an HTML error page, corrupted transfer |
 | Schema error | Valid JSON, but a required series is missing or empty, or a unit is not recognised (this includes NWS's error documents) |
 | No memory | The parser could not allocate |
+| No current data | A valid feed with nothing at all for today or tomorrow. This means the clock is far from the feed's dates, so the feed is rejected and the previous snapshot kept, instead of replacing it with an empty one |
 
 ### 5.3 Keep the previous value
 

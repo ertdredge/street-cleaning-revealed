@@ -61,6 +61,7 @@
 #include <time.h>
 #include <WiFi.h>
 #include <Preferences.h>
+#include <esp_sntp.h>           // sntp_set_time_sync_notification_cb
 #include "secrets.h"            // const char* WIFI_SSID, WIFI_PASS; add to .gitignore
 #include "waste.h"               // holidays and the trash-day state (pure calendar logic)
 #include "weather-forecast.h"   // NWS forecast parser and per-day values (pure; needs the ArduinoJson library)
@@ -344,6 +345,14 @@ volatile float lastFetchSeconds = 0.0f;
 // plus the offset recorded when the clock was last set by hand. 0 when the clock is untouched.
 volatile int32_t simClockOffset = 0;
 time_t realNow() { return time(nullptr) + simClockOffset; }
+
+// SNTP re-sets the system clock to the real time about hourly. That ends any simulated date, so the offset
+// must go with it. Without this, realNow() stays weeks off, and the forecast and emergency polls then
+// work from the wrong date: the forecast parses to nothing and the top strip goes dark.
+void onTimeSync(struct timeval* tv) {
+  (void)tv;
+  simClockOffset = 0;
+}
 
 TempPrecip weatherTempPrecip(ForecastDay day, time_t now) {
   xSemaphoreTake(forecastMutex, portMAX_DELAY);
@@ -1084,6 +1093,7 @@ void setup() {
   Serial.begin(115200);
 
   WiFi.begin(WIFI_SSID, WIFI_PASS);                      // non-blocking; the renderer keeps running
+  sntp_set_time_sync_notification_cb(onTimeSync);
   configTzTime(TZ_EASTERN, "pool.ntp.org", "time.nist.gov");
   forecastMutex = xSemaphoreCreateMutex();
   emergencyMutex = xSemaphoreCreateMutex();
