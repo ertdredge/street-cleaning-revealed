@@ -1,42 +1,64 @@
 // Host tests for snow-risk.cpp.
 #include <stdio.h>
 #include <math.h>
+#include <stdlib.h>
+#include <time.h>
 #include "snow-risk.h"
 
 static int failed = 0, checks = 0;
 #define CHECK(c) do { checks++; if (!(c)) { failed++; printf("FAIL line %d: %s\n", __LINE__, #c); } } while (0)
+
+static time_t local(int y, int mo, int d, int h, int mi) {
+  struct tm t = {}; t.tm_year = y - 1900; t.tm_mon = mo - 1; t.tm_mday = d; t.tm_hour = h; t.tm_min = mi; t.tm_isdst = -1;
+  return mktime(&t);
+}
 
 static SnowOutlook day(bool valid, float inches, int pct, time_t start) {
   SnowOutlook s; s.valid = valid; s.amountMm = inches * 25.4f; s.probabilityPercent = pct; s.startTime = start; return s;
 }
 
 int main() {
+  setenv("TZ", "EST5EDT,M3.2.0,M11.1.0", 1);                   // the rule the sketch uses
+  tzset();
   SnowOutlook none = day(true, 0, 0, 0), stale = day(false, 6, 100, 1000);
   SnowEvent ev[4];
   SnowOutlook w[4];
+  time_t m29 = local(2026, 10, 29, 0, 0), m30 = local(2026, 10, 30, 0, 0), m31 = local(2026, 10, 31, 0, 0);
 
   w[0] = none; w[1] = none; w[2] = none; w[3] = none;
   CHECK(snowEventsFrom(w, 4, ev, 4) == 0);
   w[0] = stale; w[1] = stale; w[2] = stale; w[3] = stale;      // no fresh data: no snow
   CHECK(snowEventsFrom(w, 4, ev, 4) == 0);
 
-  w[0] = none; w[1] = day(true, 6, 100, 5000); w[2] = none; w[3] = none;     // tomorrow only
+  time_t t30_8 = local(2026, 10, 30, 8, 0);
+  w[0] = none; w[1] = day(true, 6, 100, t30_8); w[2] = none; w[3] = none;     // tomorrow only
   CHECK(snowEventsFrom(w, 4, ev, 4) == 1);
-  CHECK(ev[0].any && fabsf(ev[0].inches - 6) < 0.01f && ev[0].percent == 100 && ev[0].start == 5000);
-  w[0] = day(true, 3, 80, 2000); w[1] = day(true, 3, 100, 90000);           // storm across midnight: add up
-  CHECK(snowEventsFrom(w, 4, ev, 4) == 1);
-  CHECK(fabsf(ev[0].inches - 6) < 0.01f && ev[0].percent == 100 && ev[0].start == 2000);
-  w[0] = stale; w[1] = day(true, 2, 50, 7000); w[2] = none; w[3] = none;
-  CHECK(snowEventsFrom(w, 4, ev, 4) == 1 && fabsf(ev[0].inches - 2) < 0.01f && ev[0].percent == 50 && ev[0].start == 7000);
-  w[0] = none; w[1] = none; w[2] = none; w[3] = day(true, 5, 90, 300000);   // three days out: seen
-  CHECK(snowEventsFrom(w, 4, ev, 4) == 1 && ev[0].start == 300000 && fabsf(ev[0].inches - 5) < 0.01f);
-  w[0] = day(true, 1, 40, 1000); w[1] = none; w[2] = none; w[3] = day(true, 5, 90, 300000);   // separate storms
+  CHECK(ev[0].any && fabsf(ev[0].inches - 6) < 0.01f && ev[0].percent == 100 && ev[0].start == t30_8);
+  w[0] = stale; w[1] = day(true, 2, 50, t30_8); w[2] = none; w[3] = none;
+  CHECK(snowEventsFrom(w, 4, ev, 4) == 1 && fabsf(ev[0].inches - 2) < 0.01f && ev[0].percent == 50 && ev[0].start == t30_8);
+  time_t t1_5 = local(2026, 11, 1, 5, 0);
+  w[0] = none; w[1] = none; w[2] = none; w[3] = day(true, 5, 90, t1_5);     // three days out: seen
+  CHECK(snowEventsFrom(w, 4, ev, 4) == 1 && ev[0].start == t1_5 && fabsf(ev[0].inches - 5) < 0.01f);
+
+  // An earlier small snowfall must not hide a later bigger one: the real feed from 2026-10-28 has
+  // 0.3 in at 22% starting at midnight today, and 0.4 in at 48% starting 08:00 tomorrow.
+  w[0] = day(true, 0.3f, 22, m29); w[1] = day(true, 0.4f, 48, t30_8); w[2] = none; w[3] = none;
   CHECK(snowEventsFrom(w, 4, ev, 4) == 2);
-  CHECK(ev[0].start == 1000 && fabsf(ev[0].inches - 1) < 0.01f && ev[0].percent == 40);
-  CHECK(ev[1].start == 300000 && fabsf(ev[1].inches - 5) < 0.01f && ev[1].percent == 90);
-  CHECK(snowEventsFrom(w, 4, ev, 1) == 1 && ev[0].start == 1000);           // output limit respected
-  w[0] = none; w[1] = day(true, 1, 40, 5), w[2] = day(true, 2, 70, 6); w[3] = day(true, 3, 60, 7);   // a three-day storm
-  CHECK(snowEventsFrom(w, 4, ev, 4) == 1 && fabsf(ev[0].inches - 6) < 0.01f && ev[0].percent == 70 && ev[0].start == 5);
+  CHECK(ev[0].start == m29 && fabsf(ev[0].inches - 0.3f) < 0.01f && ev[0].percent == 22);
+  CHECK(ev[1].start == t30_8 && fabsf(ev[1].inches - 0.4f) < 0.01f && ev[1].percent == 48);
+  w[0] = day(true, 1, 40, local(2026, 10, 29, 6, 0)); w[1] = none; w[2] = none; w[3] = day(true, 5, 90, t1_5);   // separate storms
+  CHECK(snowEventsFrom(w, 4, ev, 4) == 2 && ev[1].start == t1_5 && fabsf(ev[1].inches - 5) < 0.01f && ev[1].percent == 90);
+  CHECK(snowEventsFrom(w, 4, ev, 1) == 1 && fabsf(ev[0].inches - 1) < 0.01f);   // output limit respected
+
+  // A storm across midnight is split across days by the feed; a day whose snow starts at local midnight
+  // continues the previous day's storm.
+  w[0] = day(true, 3, 80, local(2026, 10, 29, 20, 0)); w[1] = day(true, 3, 100, m30); w[2] = none; w[3] = none;
+  CHECK(snowEventsFrom(w, 4, ev, 4) == 1);
+  CHECK(fabsf(ev[0].inches - 6) < 0.01f && ev[0].percent == 100 && ev[0].start == local(2026, 10, 29, 20, 0));
+  w[0] = none; w[1] = day(true, 1, 40, local(2026, 10, 30, 22, 0)); w[2] = day(true, 2, 70, m31); w[3] = day(true, 3, 60, local(2026, 11, 1, 0, 0));   // a three-day storm
+  CHECK(snowEventsFrom(w, 4, ev, 4) == 1 && fabsf(ev[0].inches - 6) < 0.01f && ev[0].percent == 70 && ev[0].start == local(2026, 10, 30, 22, 0));
+  w[0] = day(true, 1, 40, m29); w[1] = day(true, 2, 70, local(2026, 10, 30, 3, 0)); w[2] = none; w[3] = none;   // second day starts after midnight: separate
+  CHECK(snowEventsFrom(w, 4, ev, 4) == 2);
 
   // 1.2: 100% and >= 4 in -> the base risk unchanged
   SnowEvent big = { true, 6.0f, 100, 1 };

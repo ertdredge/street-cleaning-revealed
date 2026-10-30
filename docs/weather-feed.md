@@ -123,7 +123,7 @@ $$
 
 An hour of **trace** snow is ignored: an interval counts only if its rate is at least 0.25 mm per hour (about 0.01 inch). Reported in mm, with an inches accessor, 25.4 mm to the inch.
 
-A storm that crosses midnight is split between its two days. The storm total is the sum over consecutive snowy days, which the display logic forms (`snow-risk.cpp`); the per-day split keeps each value attributable to one calendar day.
+A storm that crosses midnight is split between its two days. The display logic (`snow-risk.cpp`) treats each day's snow as its own event, except that a day whose snow starts at local midnight continues the previous day's storm and is added to it; the per-day split keeps each value attributable to one calendar day.
 
 ### 4.4 Snow start time
 

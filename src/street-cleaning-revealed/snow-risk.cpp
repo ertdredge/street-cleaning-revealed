@@ -1,11 +1,20 @@
 #include "snow-risk.h"
 #include <math.h>
 
+// True when `t` is exactly local midnight. The feed reports a day's snow start as midnight when the
+// snow was already falling as the day began, i.e. the storm continues from the previous day.
+static bool isLocalMidnight(time_t t) {
+  struct tm lt;
+  localtime_r(&t, &lt);
+  return lt.tm_hour == 0 && lt.tm_min == 0 && lt.tm_sec == 0;
+}
+
 int snowEventsFrom(const SnowOutlook* days, int n, SnowEvent* out, int maxOut) {
   int count = 0;
   bool open = false;                                  // inside a run of snowy days
   for (int i = 0; i < n; i++) {
     if (!days[i].snowForecast()) { open = false; continue; }
+    if (open && !isLocalMidnight(days[i].startTime)) open = false;   // began after midnight: a new storm
     if (!open) {
       if (count >= maxOut) break;
       out[count].any = true;

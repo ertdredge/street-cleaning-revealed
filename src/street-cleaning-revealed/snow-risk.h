@@ -3,11 +3,12 @@
 // snow emergencies declared by the city are not used yet.
 //
 // A forecast snow EVENT is built from the SnowOutlooks of today and the next three days, which is at
-// least 72 hours ahead. A storm across midnight is split across days by the feed, so each run of
-// consecutive snowy days is one event: total inches, the largest probability proxy, and the first start
-// time. Runs separated by a snow-free day are separate events, and the riskiest one counts. The risk is
-// the street cleaning risk function evaluated as if cleaning ended when the snow starts, scaled down
-// for a small or uncertain storm.
+// least 72 hours ahead. Each snowy day is its own event, with its own amount, probability and start,
+// so an earlier small or unlikely snowfall never hides a later bigger one. The one exception is a storm
+// that runs across midnight, which the feed splits across two days: a day whose snow starts at local
+// midnight continues the previous day's storm and is added to it (inches summed, largest probability,
+// earliest start). The risk of each event is the street cleaning risk function evaluated as if cleaning
+// ended when its snow starts, scaled down for a small or uncertain storm; the highest risk counts.
 #pragma once
 #include <time.h>
 #include "weather-forecast.h"
@@ -19,7 +20,7 @@ struct SnowEvent {
   time_t start;      // first hour with measurable snow
 };
 
-// Groups `n` consecutive days (day 0 = today) into events, earliest first; at most `maxOut` events are
+// Turns `n` consecutive days (day 0 = today) into events, earliest first; at most `maxOut` events are
 // written and the count is returned. Days without fresh data count as no snow.
 int snowEventsFrom(const SnowOutlook* days, int n, SnowEvent* out, int maxOut);
 
