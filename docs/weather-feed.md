@@ -4,13 +4,20 @@
 
 ## 1. Purpose and scope
 
-The display needs a short list of forecast values for Somerville, MA, for **today** and for **tomorrow**:
+The display needs a short list of forecast values for Somerville, MA, for **the next four days**:
 
 | Value | Used for |
 |---|---|
 | Snow accumulation amount | $inches$ in the snow removal risk (Ambient-Display-Encoding.md, 1.2) |
 | Snow probability | $percent$ in the snow removal risk |
 | Snow accumulation start time | $remaining$ in the snow removal risk (hours until the snow starts) |
+
+This document describes monitoring NWS snow forecasts.  Explicit municipal declarations of snow emergencies are described in the [Snow Emergency Feed document](snow-emergency-feed.md).
+
+The display additionally needs these forecast values for Somerville, MA, for **today** and for **tomorrow**:
+
+| Value | Used for |
+|---|---|
 | Forecast high temperature | Display; encoding not defined in this document |
 | Probability of precipitation (any kind) | Display; encoding not defined in this document |
 
@@ -18,7 +25,7 @@ The city may declare a parking snow emergency when 4 or more inches of snow are 
 
 The weather module reports forecast values. It does not decide anything; turning the values into a risk is the job of the display logic.
 
-A single location is monitored, so the grid cell is fixed at design time.
+A single location is monitored, so the NWS grid cell is fixed at design time.
 
 ---
 
