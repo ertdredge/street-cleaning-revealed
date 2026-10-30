@@ -19,6 +19,8 @@
 //   * TLS: by default the server certificate is NOT verified (setInsecure), which is acceptable for
 //     a public read-only forecast driving an art installation, but you can pin a root CA instead:
 //     pass a PEM string as `rootCaPem`.
+//   * `accept` is the Accept header: GeoJSON for NWS by default; the snow emergency feed passes
+//     "application/rss+xml" (snow-emergency.h). The class is a plain HTTPS byte stream either way.
 //   * open() returns false on a connection failure or any HTTP status other than 200; httpStatus()
 //     tells which (negative values are HTTPClient transport errors). A source that failed to open
 //     just reads as empty, so passing it to update() safely yields FORECAST_IO_ERROR.
@@ -36,7 +38,8 @@ class HttpsForecastSource : public ForecastSource {
   HttpsForecastSource() : stream_(nullptr), status_(0), total_(0), headLen_(0), timeoutMs_(20000) { head_[0] = 0; }
   ~HttpsForecastSource() { close(); }
 
-  bool open(const char* url, const char* userAgent, uint32_t timeoutMs = 20000, const char* rootCaPem = nullptr);
+  bool open(const char* url, const char* userAgent, uint32_t timeoutMs = 20000, const char* rootCaPem = nullptr,
+            const char* accept = "application/geo+json");
   void close();
   int httpStatus() const { return status_; }
   size_t bytesRead() const { return total_; }                 // raw bytes received from the server (since open())

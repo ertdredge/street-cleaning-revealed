@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SYNTHETIC: CDATA, entities, a comment, an empty item and 19 items (more than RssScanner keeps) -->
+<rss version="2.0" xml:base="https://www.somervillema.gov/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:foaf="http://xmlns.com/foaf/0.1/" xmlns:og="http://ogp.me/ns#" xmlns:schema="http://schema.org/">
+  <channel>
+    <title>City of Somerville</title>
+    <link>https://www.somervillema.gov/</link>
+    <description/>
+    <language>en</language>
+    <item>
+  <title><![CDATA[Somerville Snow Emergency Will End Tuesday, February 24 at 8 p.m.]]></title>
+  <link>https://www.somervillema.gov/news/cdata</link>
+  <description></description>
+  <pubDate>Sunday, February 22, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/cdata</guid>
+</item>
+    <item>
+  <title>Somerville Declares Snow Emergency Effective Sunday, February 22, at 12 p.m.&amp;nbsp;Noon</title>
+  <link>https://www.somervillema.gov/news/entities</link>
+  <description></description>
+  <pubDate>Saturday, February 21, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/entities</guid>
+</item>
+    <!-- <item><title>Somerville Declares Snow Emergency Effective Monday, March 2, at 7 a.m.</title></item> -->
+    <item/>
+    <item>
+  <title>Somerville&amp;#039;s Teen Shoveling Program &#8217;s Busy Week &#x2014; Thanks!</title>
+  <link>https://www.somervillema.gov/news/apostrophe</link>
+  <description></description>
+  <pubDate>Friday, February 20, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/apostrophe</guid>
+</item>
+    <item>
+  <title><![CDATA[Odd ]] title ]]] here]]></title>
+  <link>https://www.somervillema.gov/news/brackets</link>
+  <description></description>
+  <pubDate>Friday, February 20, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/brackets</guid>
+</item>
+    <item>
+  <title>Filler item 1</title>
+  <link>https://www.somervillema.gov/news/filler-1</link>
+  <description></description>
+  <pubDate>Thursday, February 19, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/filler-1</guid>
+</item>
+    <item>
+  <title>Filler item 2</title>
+  <link>https://www.somervillema.gov/news/filler-2</link>
+  <description></description>
+  <pubDate>Thursday, February 19, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/filler-2</guid>
+</item>
+    <item>
+  <title>Filler item 3</title>
+  <link>https://www.somervillema.gov/news/filler-3</link>
+  <description></description>
+  <pubDate>Thursday, February 19, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/filler-3</guid>
+</item>
+    <item>
+  <title>Filler item 4</title>
+  <link>https://www.somervillema.gov/news/filler-4</link>
+  <description></description>
+  <pubDate>Thursday, February 19, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/filler-4</guid>
+</item>
+    <item>
+  <title>Filler item 5</title>
+  <link>https://www.somervillema.gov/news/filler-5</link>
+  <description></description>
+  <pubDate>Thursday, February 19, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/filler-5</guid>
+</item>
+    <item>
+  <title>Filler item 6</title>
+  <link>https://www.somervillema.gov/news/filler-6</link>
+  <description></description>
+  <pubDate>Thursday, February 19, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/filler-6</guid>
+</item>
+    <item>
+  <title>Filler item 7</title>
+  <link>https://www.somervillema.gov/news/filler-7</link>
+  <description></description>
+  <pubDate>Thursday, February 19, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/filler-7</guid>
+</item>
+    <item>
+  <title>Filler item 8</title>
+  <link>https://www.somervillema.gov/news/filler-8</link>
+  <description></description>
+  <pubDate>Thursday, February 19, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/filler-8</guid>
+</item>
+    <item>
+  <title>Filler item 9</title>
+  <link>https://www.somervillema.gov/news/filler-9</link>
+  <description></description>
+  <pubDate>Thursday, February 19, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/filler-9</guid>
+</item>
+    <item>
+  <title>Filler item 10</title>
+  <link>https://www.somervillema.gov/news/filler-10</link>
+  <description></description>
+  <pubDate>Thursday, February 19, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/filler-10</guid>
+</item>
+    <item>
+  <title>Filler item 11</title>
+  <link>https://www.somervillema.gov/news/filler-11</link>
+  <description></description>
+  <pubDate>Thursday, February 19, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/filler-11</guid>
+</item>
+    <item>
+  <title>Filler item 12</title>
+  <link>https://www.somervillema.gov/news/filler-12</link>
+  <description></description>
+  <pubDate>Thursday, February 19, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/filler-12</guid>
+</item>
+    <item>
+  <title>Filler item 13</title>
+  <link>https://www.somervillema.gov/news/filler-13</link>
+  <description></description>
+  <pubDate>Thursday, February 19, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/filler-13</guid>
+</item>
+    <item>
+  <title>Filler item 14</title>
+  <link>https://www.somervillema.gov/news/filler-14</link>
+  <description></description>
+  <pubDate>Thursday, February 19, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/filler-14</guid>
+</item>
+    <item>
+  <title>Filler item 15</title>
+  <link>https://www.somervillema.gov/news/filler-15</link>
+  <description></description>
+  <pubDate>Thursday, February 19, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/filler-15</guid>
+</item>
+  </channel>
+</rss>

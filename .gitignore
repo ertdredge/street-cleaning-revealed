@@ -9,3 +9,4 @@ test/weather-cli
 test/*.dSYM/
 test/weather-display-test
 test/snow-risk-test
+test/snow-emergency-test

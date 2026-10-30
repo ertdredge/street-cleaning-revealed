@@ -3,7 +3,8 @@
 
 #ifdef ARDUINO
 
-bool HttpsForecastSource::open(const char* url, const char* userAgent, uint32_t timeoutMs, const char* rootCaPem) {
+bool HttpsForecastSource::open(const char* url, const char* userAgent, uint32_t timeoutMs, const char* rootCaPem,
+                               const char* accept) {
   close();
   timeoutMs_ = timeoutMs;
   total_ = 0; headLen_ = 0; head_[0] = 0;
@@ -16,7 +17,7 @@ bool HttpsForecastSource::open(const char* url, const char* userAgent, uint32_t 
   http_.useHTTP10(true);                                // no chunked transfer encoding
   http_.setReuse(false);
   http_.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  http_.addHeader("Accept", "application/geo+json");
+  if (accept && *accept) http_.addHeader("Accept", accept);
   if (!http_.begin(client_, url)) { status_ = -1; return false; }
   status_ = http_.GET();
   if (status_ != HTTP_CODE_OK) { http_.end(); return false; }

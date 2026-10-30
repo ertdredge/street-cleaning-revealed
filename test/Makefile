@@ -1,7 +1,7 @@
 # Host (Mac/Linux) build and tests for the weather forecast module. Nothing here touches the ESP32.
 #
 #   make deps      once: download the ArduinoJson single header into vendor/ (needs curl)
-#   make test      build and run the unit tests (forecast parser and top-strip display)
+#   make test      build and run the unit tests (forecast parser, top-strip display, snow risk, snow emergency feed)
 #   make cli       build ./weather-cli (see weather-forecast.h for examples)
 #   make fixtures  regenerate data/synthetic/*.json from the real capture (needs ruby)
 #   make clean
@@ -20,16 +20,20 @@ INCLUDES       = -I$(SRC) -I$(ARDUINOJSON_DIR)
 .PHONY: all test cli deps fixtures clean
 all: test
 
-test: weather-forecast-test weather-display-test snow-risk-test
+test: weather-forecast-test weather-display-test snow-risk-test snow-emergency-test
 	./weather-forecast-test
 	./weather-display-test
 	./snow-risk-test
+	./snow-emergency-test
 
 DISPLAY_CORE   = $(SRC)/weather-display.cpp $(SRC)/typical-highs.cpp
 DISPLAY_HDR    = $(SRC)/weather-display.h
 
 weather-display-test: weather-display-test.cpp $(DISPLAY_CORE) $(DISPLAY_HDR)
 	$(CXX) $(CXXFLAGS) -I$(SRC) -o $@ weather-display-test.cpp $(DISPLAY_CORE)
+
+snow-emergency-test: snow-emergency-test.cpp $(SRC)/snow-emergency.cpp $(SRC)/snow-emergency.h
+	$(CXX) $(CXXFLAGS) -I$(SRC) -DDATA_DIR='"data"' -o $@ snow-emergency-test.cpp $(SRC)/snow-emergency.cpp
 
 snow-risk-test: snow-risk-test.cpp $(SRC)/snow-risk.cpp $(SRC)/snow-risk.h $(HEADERS)
 	$(CXX) $(CXXFLAGS) -I$(SRC) -o $@ snow-risk-test.cpp $(SRC)/snow-risk.cpp
@@ -52,4 +56,4 @@ fixtures:
 	ruby make-synthetic-fixtures.rb
 
 clean:
-	rm -f weather-forecast-test weather-display-test snow-risk-test weather-cli
+	rm -f weather-forecast-test weather-display-test snow-risk-test snow-emergency-test weather-cli

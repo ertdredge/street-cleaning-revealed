@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SYNTHETIC: real snow emergency title and date (2026-01-24); other items invented; structure of the real feed -->
+<rss version="2.0" xml:base="https://www.somervillema.gov/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:foaf="http://xmlns.com/foaf/0.1/" xmlns:og="http://ogp.me/ns#" xmlns:schema="http://schema.org/">
+  <channel>
+    <title>City of Somerville</title>
+    <link>https://www.somervillema.gov/</link>
+    <description/>
+    <language>en</language>
+    <item>
+  <title>Somerville Declares Snow Emergency Effective Sunday, January 25, at 7 a.m.</title>
+  <link>https://www.somervillema.gov/news/somerville-declares-snow-emergency-effective-sunday-january-25-7-am</link>
+  <description>The City of Somerville has declared a snow emergency based on weather forecasts. Beginning at 7 a.m., cars will have four hours...</description>
+  <pubDate>Saturday, January 24, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/somerville-declares-snow-emergency-effective-sunday-january-25-7-am</guid>
+</item>
+    <item>
+  <title>Warming Center Open Overnight</title>
+  <link>https://www.somervillema.gov/news/warming-center-open-overnight</link>
+  <description>Teaser...</description>
+  <pubDate>Friday, January 23, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/warming-center-open-overnight</guid>
+</item>
+    <item>
+  <title>Somerville Shares Winter Storm Preparation Tips</title>
+  <link>https://www.somervillema.gov/news/somerville-shares-winter-storm-preparation-tips</link>
+  <description>Teaser...</description>
+  <pubDate>Friday, January 23, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/somerville-shares-winter-storm-preparation-tips</guid>
+</item>
+    <item>
+  <title>Snow Emergency Parking Exceptions for Residents with Disabilities</title>
+  <link>https://www.somervillema.gov/news/snow-emergency-parking-exceptions</link>
+  <description>Teaser...</description>
+  <pubDate>Thursday, January 22, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/snow-emergency-parking-exceptions</guid>
+</item>
+    <item>
+  <title>Somerville Invites Residents to Budget Forum</title>
+  <link>https://www.somervillema.gov/news/somerville-invites-residents-budget-forum</link>
+  <description>Teaser...</description>
+  <pubDate>Wednesday, January 21, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/somerville-invites-residents-budget-forum</guid>
+</item>
+    <item>
+  <title>Teen Shoveling Program Seeks Volunteers</title>
+  <link>https://www.somervillema.gov/news/teen-shoveling-program-seeks-volunteers</link>
+  <description>Teaser...</description>
+  <pubDate>Tuesday, January 20, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/teen-shoveling-program-seeks-volunteers</guid>
+</item>
+    <item>
+  <title>What Happens When a Snow Emergency Is Declared?</title>
+  <link>https://www.somervillema.gov/news/what-happens-when-snow-emergency-declared</link>
+  <description>Teaser...</description>
+  <pubDate>Tuesday, January 20, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/what-happens-when-snow-emergency-declared</guid>
+</item>
+    <item>
+  <title>Library Hours Update</title>
+  <link>https://www.somervillema.gov/news/library-hours-update</link>
+  <description>Teaser...</description>
+  <pubDate>Monday, January 19, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/library-hours-update</guid>
+</item>
+    <item>
+  <title>City Council Meeting Schedule</title>
+  <link>https://www.somervillema.gov/news/city-council-meeting-schedule</link>
+  <description>Teaser...</description>
+  <pubDate>Monday, January 19, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/city-council-meeting-schedule</guid>
+</item>
+    <item>
+  <title>Somerville Celebrates Martin Luther King Jr. Day</title>
+  <link>https://www.somervillema.gov/news/somerville-celebrates-mlk-day</link>
+  <description>Teaser...</description>
+  <pubDate>Friday, January 16, 2026</pubDate>
+  <dc:creator>No</dc:creator>
+  <guid isPermaLink="true">https://www.somervillema.gov/news/somerville-celebrates-mlk-day</guid>
+</item>
+  </channel>
+</rss>
