@@ -171,7 +171,7 @@ The 96-hour limit guards against a missing end notice, as in January 2024. The l
 
 ### 5.4 Persistence
 
-The declaration scrolls out of the 10-item feed within days, so a reboot during an emergency would lose it. The state (two 64-bit times) must be saved to NVS (`Preferences`) whenever it changes and restored at boot. This is part of the sketch wiring (Project-Plan.md, Phase S) and is not done yet.
+The declaration scrolls out of the 10-item feed within days, so a reboot during an emergency would lose it. The state (two 64-bit times) must be saved to NVS (`Preferences`) whenever it changes and restored at boot. The sketch does this (`saveEmergencyState` / `restoreEmergencyState`, namespace `snowem`).
 
 ---
 
@@ -225,7 +225,7 @@ const char* snowNoticeKindName(SnowNoticeKind);  const char* snowEmergencyPhaseN
 
 `HttpsForecastSource::open(url, userAgent, timeoutMs = 20000, rootCaPem = nullptr, accept = "application/geo+json")`: the snow emergency fetch passes `"application/rss+xml"` as `accept`.
 
-### 6.3 Wiring into the sketch (planned, not done)
+### 6.3 Wiring into the sketch (done 2026-10-30; not yet compiled for the ESP32)
 
 The intended shape, following the weather task (`weatherTask` in `street-cleaning-revealed.ino`):
 

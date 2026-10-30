@@ -216,7 +216,7 @@ The design separates the parts that need no hardware from the part that does, fo
 
 ## 9. The snow emergency feed
 
-City-declared parking snow emergencies come from a second source, the city's news RSS feed (`https://www.somervillema.gov/news.xml`). The full design is in `snow-emergency-feed.md`. This section covers what the sketch needs to wire it in. The wiring is not done yet (Project-Plan.md, Phase S).
+City-declared parking snow emergencies come from a second source, the city's news RSS feed (`https://www.somervillema.gov/news.xml`). The full design is in `snow-emergency-feed.md`. This section covers what the sketch needs to wire it in. The wiring is done (Project-Plan.md, Phase S), pending the first ESP32 compile.
 
 ### 9.1 Relation to this module
 

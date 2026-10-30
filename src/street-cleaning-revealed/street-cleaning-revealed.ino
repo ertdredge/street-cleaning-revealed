@@ -27,6 +27,15 @@
 //                  starting H hours from now (negative: already falling). Drives the snow removal
 //                  risk on one bar (see 1.2.1), the sparkles on that bar and the bottom strip, and the top sparkle. `snow off` goes back
 //                  to the NWS forecast; `snow` alone prints the current snow event and risk.
+//   emergency      print the city snow emergency: what the city feed says, any override, the phase
+//                  (none, declared, in effect) and the last poll of the feed.
+//   emergency start WHEN   force a snow emergency starting at WHEN (no end announced yet)
+//   emergency stop WHEN    force the emergency (the forced one, else the city's) to end at WHEN
+//   emergency off          drop the override and go back to the city feed
+//                  WHEN is `now`, +H or -H (hours from now, fractions allowed), or YYYY-MM-DD HH:MM
+//                  (US Eastern). While an emergency is declared or in effect it counts as a 100% chance
+//                  of 4 inches starting at its start time, so the snow bar goes to 90 when it starts;
+//                  after its end it is ignored. The override is not saved across a reboot.
 //   forecast       print the weather snapshot: age, and today's and tomorrow's high, precipitation and snow
 //   bottom S       bottom strip pattern, same scale
 //   color r|g|b|w|y|c|m   set the current color (default w)
@@ -51,12 +60,14 @@
 #include <sys/time.h>
 #include <time.h>
 #include <WiFi.h>
+#include <Preferences.h>
 #include "secrets.h"            // const char* WIFI_SSID, WIFI_PASS; add to .gitignore
 #include "waste.h"               // holidays and the trash-day state (pure calendar logic)
 #include "weather-forecast.h"   // NWS forecast parser and per-day values (pure; needs the ArduinoJson library)
 #include "weather-feed.h"       // HTTPS fetch of the NWS feed (ESP32 only)
 #include "weather-display.h"    // top strip image from the forecast high vs the typical high (pure)
 #include "snow-risk.h"          // snow removal parking risk from the NWS forecast (pure)
+#include "snow-emergency.h"     // City of Somerville snow emergencies, from the city news RSS feed (pure)
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -341,16 +352,91 @@ TempPrecip weatherTempPrecip(ForecastDay day, time_t now) {
   return r;
 }
 
+// ---- City snow emergencies (Phase S; docs/snow-emergency-feed.md) -----------------
+const char* const SNOW_URL = "https://www.somervillema.gov/news.xml";
+const uint32_t EMERGENCY_POLL_MS = 3600000UL;     // hourly
+const uint32_t EMERGENCY_RETRY_MS = 300000UL;     // after a failed fetch or a body that is not a feed
+
+SnowEmergency emergency;                          // the city's emergency, as the feed tells it; guarded by emergencyMutex
+SemaphoreHandle_t emergencyMutex;                 // written on core 0 by the poll, read on core 1 by the renderer
+RssScanner rss;                                   // about 7 KB: a global, not on the task stack
+volatile bool emergencyUpdated = false;           // set by the poll when the state changed; loop() re-renders
+enum { EM_NONE_YET = -1, EM_OK = 0, EM_FETCH_FAILED = 1, EM_NOT_A_FEED = 2 };
+volatile int lastEmergencyStatus = EM_NONE_YET;
+volatile int lastEmergencyHttp = 0;
+volatile int lastEmergencyNotices = 0;
+volatile time_t lastEmergencyAt = 0;
+
+// The declaration scrolls out of the 10-item feed within days, so the state is kept in NVS.
+Preferences prefs;
+void saveEmergencyState(const SnowEmergencyState& st) {
+  prefs.begin("snowem", false);
+  prefs.putLong64("start", (int64_t)st.start);
+  prefs.putLong64("end", (int64_t)st.end);
+  prefs.end();
+}
+void restoreEmergencyState() {
+  prefs.begin("snowem", false);
+  emergency.state.start = (time_t)prefs.getLong64("start", 0);
+  emergency.state.end = (time_t)prefs.getLong64("end", 0);
+  prefs.end();
+}
+
+// One poll of the city feed. Returns true when the feed was read. A failed fetch, or a body that is not a
+// feed (an error page), leaves the state alone. Runs in weatherTask, after the forecast fetch, so only
+// one TLS session is open at a time.
+bool pollSnowEmergency() {
+  HttpsForecastSource feed;
+  if (!feed.open(SNOW_URL, NWS_USER_AGENT, 20000, nullptr, "application/rss+xml")) {
+    lastEmergencyStatus = EM_FETCH_FAILED;
+    lastEmergencyHttp = feed.httpStatus();
+    Serial.printf("snow emergency: fetch failed (http %d); trying again in %lu s\n", lastEmergencyHttp,
+                  (unsigned long)(EMERGENCY_RETRY_MS / 1000UL));
+    return false;
+  }
+  DechunkingSource body(feed);                    // in case the server chunks the response
+  rss.reset();
+  scanRss(body, rss);
+  lastEmergencyHttp = feed.httpStatus();
+  feed.close();
+  if (!rss.sawFeed()) {
+    lastEmergencyStatus = EM_NOT_A_FEED;
+    Serial.printf("snow emergency: not a feed (http %d, %u bytes); trying again in %lu s\n", lastEmergencyHttp,
+                  (unsigned)rss.bytes(), (unsigned long)(EMERGENCY_RETRY_MS / 1000UL));
+    return false;
+  }
+  time_t now = realNow();
+  xSemaphoreTake(emergencyMutex, portMAX_DELAY);
+  SnowEmergency next = emergency;
+  xSemaphoreGive(emergencyMutex);
+  int notices = next.update(rss, now);
+  bool changed = next.state.start != emergency.state.start || next.state.end != emergency.state.end;
+  xSemaphoreTake(emergencyMutex, portMAX_DELAY);
+  emergency = next;
+  xSemaphoreGive(emergencyMutex);
+  lastEmergencyStatus = EM_OK;
+  lastEmergencyNotices = notices;
+  lastEmergencyAt = now;
+  Serial.printf("snow emergency: read %d feed items, %d snow notices%s\n", rss.count(), notices, changed ? ", state changed" : "");
+  if (changed) {
+    saveEmergencyState(next.state);
+    emergencyUpdated = true;
+  }
+  return true;
+}
+
 // Runs on core 0 so that the blocking HTTPS fetch (several seconds) never stalls the renderer
 // on core 1. Hourly after a good fetch; every 5 minutes after a failed one. A failed fetch
 // leaves the previous snapshot in place (it goes stale after 12 hours: see weather-forecast.h).
 void weatherTask(void*) {
   WeatherForecast fetched;                 // private to this task; copied into `forecast` when good
   int failures = 0;
+  uint32_t forecastDue = 0, emergencyDue = 0;    // millis() times of the next fetches
   for (;;) {
-    uint32_t waitMs = 5000;                // WiFi or clock not ready: look again shortly
+    uint32_t waitMs = 5000;
     time_t now = realNow();
-    if (WiFi.status() == WL_CONNECTED && now >= CLOCK_VALID_AFTER) {
+    bool ready = WiFi.status() == WL_CONNECTED && now >= CLOCK_VALID_AFTER;   // else look again shortly
+    if (ready && (int32_t)(millis() - forecastDue) >= 0) {
       Serial.println("weather: fetching");
       uint32_t t0 = millis();
       HttpsForecastSource raw;
@@ -384,8 +470,13 @@ void weatherTask(void*) {
                       feed.chunked() ? "chunked" : "not chunked", (unsigned)feed.bytesOut(), shown);
       }
       raw.close();
+      forecastDue = millis() + waitMs;
     }
-    vTaskDelay(pdMS_TO_TICKS(waitMs));
+    if (ready && (int32_t)(millis() - emergencyDue) >= 0) {
+      bool ok = pollSnowEmergency();
+      emergencyDue = millis() + (ok ? EMERGENCY_POLL_MS : EMERGENCY_RETRY_MS);
+    }
+    vTaskDelay(pdMS_TO_TICKS(5000));
   }
 }
 
@@ -394,27 +485,74 @@ void weatherTask(void*) {
 struct SnowOverride { bool active; int percent; float inches; time_t start; };
 SnowOverride snowOverride = { false, 0, 0.0f, 0 };
 
-// The snow events the bars use, earliest first (at most two fit in four days): the override, else the
-// NWS forecast for today and the next three days (at least 72 hours). While the clock is simulated
-// (time, sweep, test-suite) the real forecast is left out, so a real storm does not leak into the
-// simulated dates.
-const int MAX_SNOW_EVENTS = 4;
-int currentSnowEvents(SnowEvent* out, int maxOut) {   // (a plain pointer: the generated prototype comes before MAX_SNOW_EVENTS)
+// `emergency start|stop WHEN|off` serial override of the city's snow emergency, for testing and manual
+// control. Absolute times on the system clock, so a `time` sweep moves through them. Not saved.
+bool emergencyOverride = false;
+SnowEmergencyState emergencyOverrideState = { 0, 0 };
+
+// The snow emergency the display uses: the override, else the city's (from the feed), which like the real
+// forecast is left out while the clock is simulated. False when there is none.
+bool currentEmergency(SnowEmergencyState* st) {
+  if (emergencyOverride) { *st = emergencyOverrideState; return st->start != 0; }
+  st->start = 0; st->end = 0;
+  if (simClockOffset != 0) return false;
+  xSemaphoreTake(emergencyMutex, portMAX_DELAY);
+  *st = emergency.state;
+  xSemaphoreGive(emergencyMutex);
+  return st->start != 0;
+}
+
+SnowEmergencyPhase emergencyPhase(const SnowEmergencyState& st, time_t now) {
+  SnowEmergency tmp;
+  tmp.state = st;
+  return tmp.phase(now);
+}
+
+// The snow events the bars use: the snow override, else the NWS forecast for today and the next three days
+// (at least 72 hours); both left out while the clock is simulated (time, sweep, test-suite), so a real
+// storm does not leak into the simulated dates (the snow override always applies). Then the city's snow
+// emergency (1.2): while it is declared or in effect it is a full-size event (100%, 4 inches) starting when the
+// parking ban starts, so the risk is the cleaning-risk curve up to the ban and 90 during it. Once it has ended,
+// forecast events that started before its end are the same storm and are dropped, so they cannot hold the bar
+// up until midnight. `*emergencyLast` tells whether the last event is the emergency.
+const int MAX_SNOW_EVENTS = 6;
+int currentSnowEvents(SnowEvent* out, int maxOut, time_t now, bool* emergencyLast) {   // (plain types: the generated prototype comes before the constants)
+  int n = 0;
+  *emergencyLast = false;
   if (snowOverride.active) {
-    if (snowOverride.inches <= 0.0f) return 0;
-    out[0].any = true;
-    out[0].inches = snowOverride.inches;
-    out[0].percent = snowOverride.percent;
-    out[0].start = snowOverride.start;
-    return 1;
+    if (snowOverride.inches > 0.0f && n < maxOut) {
+      out[n].any = true;
+      out[n].inches = snowOverride.inches;
+      out[n].percent = snowOverride.percent;
+      out[n].start = snowOverride.start;
+      n++;
+    }
+  } else if (simClockOffset == 0) {
+    time_t wn = realNow();
+    SnowOutlook days[FORECAST_DAYS_USED];
+    xSemaphoreTake(forecastMutex, portMAX_DELAY);
+    for (int d = 0; d < FORECAST_DAYS_USED; d++) days[d] = forecast.snow((ForecastDay)d, wn);
+    xSemaphoreGive(forecastMutex);
+    n = snowEventsFrom(days, FORECAST_DAYS_USED, out, maxOut);
   }
-  if (simClockOffset != 0) return 0;
-  time_t wn = realNow();
-  SnowOutlook days[FORECAST_DAYS_USED];
-  xSemaphoreTake(forecastMutex, portMAX_DELAY);
-  for (int d = 0; d < FORECAST_DAYS_USED; d++) days[d] = forecast.snow((ForecastDay)d, wn);
-  xSemaphoreGive(forecastMutex);
-  return snowEventsFrom(days, FORECAST_DAYS_USED, out, maxOut);
+  SnowEmergencyState es;
+  if (currentEmergency(&es)) {
+    if (emergencyPhase(es, now) != SNOW_EMERGENCY_NONE) {
+      if (n < maxOut) {
+        out[n].any = true;
+        out[n].inches = SNOW_EMERGENCY_INCHES;
+        out[n].percent = 100;
+        out[n].start = es.start;
+        n++;
+        *emergencyLast = true;
+      }
+    } else if (es.end > es.start && es.end <= now) {
+      int k = 0;
+      for (int i = 0; i < n; i++) if (out[i].start >= es.end) out[k++] = out[i];
+      n = k;
+    }
+  }
+  return n;
 }
 
 // 3.3.1: snow on the day the top strip shows.
@@ -465,6 +603,50 @@ void printForecast() {
   }
 }
 
+// One line: label, phase, start and end of a snow emergency state.
+void printEmergencyState(const char* label, const SnowEmergencyState& st, time_t now) {
+  if (st.start == 0) { Serial.printf("%s: none\n", label); return; }
+  char a[40], b[40];
+  fmtTime(st.start, a, sizeof a);
+  if (st.end) fmtTime(st.end, b, sizeof b); else strcpy(b, "not announced");
+  SnowEmergencyPhase ph = emergencyPhase(st, now);
+  Serial.printf("%s: %s, ban starts %s, ends %s\n", label, ph != SNOW_EMERGENCY_NONE ? snowEmergencyPhaseName(ph) : st.end ? "ended" : "expired", a, b);
+}
+
+void printEmergency() {
+  time_t now = time(nullptr);
+  xSemaphoreTake(emergencyMutex, portMAX_DELAY);
+  SnowEmergencyState city = emergency.state;
+  xSemaphoreGive(emergencyMutex);
+  printEmergencyState("emergency (city feed)", city, realNow());
+  if (emergencyOverride) printEmergencyState("emergency (override)", emergencyOverrideState, now);
+  else Serial.println("emergency override: off");
+  SnowEmergencyState used;
+  if (currentEmergency(&used)) printEmergencyState("emergency in use", used, now);
+  else Serial.printf("emergency in use: none%s\n", simClockOffset != 0 && !emergencyOverride ? " (the city feed is left out while the clock is simulated)" : "");
+  if (lastEmergencyStatus == EM_NONE_YET) Serial.println("emergency poll: none yet (waiting for WiFi and the clock)");
+  else if (lastEmergencyStatus == EM_OK) {
+    Serial.printf("emergency poll: ok %ld min ago, %d snow notices in the feed\n", (long)((realNow() - lastEmergencyAt) / 60), (int)lastEmergencyNotices);
+  } else {
+    Serial.printf("emergency poll: %s (http %d)\n", lastEmergencyStatus == EM_FETCH_FAILED ? "fetch failed" : "not a feed", (int)lastEmergencyHttp);
+  }
+}
+
+// WHEN for the emergency command: `now`, +H or -H (hours from now, fractions allowed), or
+// YYYY-MM-DD HH:MM[:SS] in US Eastern local time.
+bool parseWhen(const char* s, time_t* out) {
+  while (*s == ' ') s++;
+  if (strncmp(s, "now", 3) == 0) { *out = time(nullptr); return true; }
+  if (*s == '+' || *s == '-') {
+    char* end;
+    double h = strtod(s, &end);
+    if (end == s || *end) return false;
+    *out = time(nullptr) + (time_t)(h * 3600.0);
+    return true;
+  }
+  return parseDateTime(s, out) != nullptr;
+}
+
 // ---- Clock-driven display -----------------------------------------------------
 bool clockMode = true;          // display follows the clock until a manual command
 bool clockRendered = false;     // true once a valid clock has been rendered
@@ -510,7 +692,8 @@ void sweepStep() {
 }
 
 // Test suite (test-suite): a fixed list of dates, one every 6 seconds.
-struct TestCase { const char* when; const char* label; };   // when: YYYY-MM-DD HH:MM, US Eastern
+// when: YYYY-MM-DD HH:MM, US Eastern. emStart / emEnd (optional): a snow emergency forced for that case only.
+struct TestCase { const char* when; const char* label; const char* emStart; const char* emEnd; };
 const TestCase TEST_SUITE[] = {
   { "2026-10-02 18:00", "unremarkable" },
   { "2026-09-08 15:00", "trash delayed by holiday" },
@@ -522,6 +705,9 @@ const TestCase TEST_SUITE[] = {
   { "2026-09-10 11:00", "trash collection and street cleaning" },
   { "2026-05-06 18:00", "street cleaning imminent both sides" },
   { "2026-10-23 18:00", "street cleaning left very far away" },
+  { "2026-12-10 18:00", "snow emergency declared, ban starts in 10 hours", "2026-12-11 04:00", nullptr },
+  { "2026-12-11 08:00", "snow emergency in effect", "2026-12-11 04:00", nullptr },
+  { "2026-12-12 12:00", "snow emergency ended", "2026-12-11 04:00", "2026-12-12 06:00" },
 };
 const int NUM_TESTS = sizeof(TEST_SUITE) / sizeof(TEST_SUITE[0]);
 const uint32_t SUITE_STEP_MS = 6000;
@@ -529,11 +715,19 @@ const uint32_t SUITE_STEP_MS = 6000;
 bool suiteActive = false;
 int suiteIndex = 0;
 uint32_t suiteLastMs = 0;
+bool suiteSavedOverride = false;                 // the emergency override from before the suite
+SnowEmergencyState suiteSavedState = { 0, 0 };
+
+void suiteRestore() {                            // the suite's own emergency cases must not outlive it
+  emergencyOverride = suiteSavedOverride;
+  emergencyOverrideState = suiteSavedState;
+}
 
 void suiteStep() {
   suiteLastMs = millis();
   if (suiteIndex >= NUM_TESTS) {          // the last case has been shown for its full time
     suiteActive = false;
+    suiteRestore();
     Serial.println("\ntest-suite done");
     return;
   }
@@ -542,7 +736,22 @@ void suiteStep() {
   if (!parseDateTime(t.when, &when)) {
     Serial.printf("test-suite: bad date '%s'\n", t.when);
     suiteActive = false;
+    suiteRestore();
     return;
+  }
+  if (t.emStart) {                                 // this case forces an emergency
+    time_t es = 0, ee = 0;
+    if (!parseDateTime(t.emStart, &es) || (t.emEnd && !parseDateTime(t.emEnd, &ee))) {
+      Serial.printf("test-suite: bad emergency time in '%s'\n", t.label);
+      suiteActive = false;
+      suiteRestore();
+      return;
+    }
+    emergencyOverrideState.start = es;
+    emergencyOverrideState.end = ee;
+    emergencyOverride = true;
+  } else {
+    suiteRestore();
   }
   Serial.printf("\n=== test-suite %d/%d: %s  %s ===\n", suiteIndex + 1, NUM_TESTS, t.when, t.label);
   setClockTo(when);
@@ -581,12 +790,15 @@ void updateFromClock(bool verbose) {
   localtime_r(&now, &nt);
   bool snowOnRight = snowRiskOnRightBar(nt.tm_year + 1900, nt.tm_mon + 1);
   SnowEvent events[MAX_SNOW_EVENTS];
-  int nEvents = currentSnowEvents(events, MAX_SNOW_EVENTS);
+  bool emergencyLast;
+  int nEvents = currentSnowEvents(events, MAX_SNOW_EVENTS, now, &emergencyLast);
   SnowEvent snow = { false, 0.0f, 0, 0 };               // the event with the highest risk
   int snowRisk = 0;
+  bool snowIsEmergency = false;
   for (int i = 0; i < nEvents; i++) {
     int r = snowRiskFrom(events[i], riskFromHours((int64_t)(events[i].start - now) / 3600.0f));
-    if (i == 0 || r > snowRisk) { snowRisk = r; snow = events[i]; }
+    bool isEm = emergencyLast && i == nEvents - 1;
+    if (i == 0 || r > snowRisk || (r == snowRisk && isEm)) { snowRisk = r; snow = events[i]; snowIsEmergency = isEm; }   // a tie shows the city's emergency
   }
   if (snowOnRight) riskR = max(riskR, snowRisk);
   else             riskL = max(riskL, snowRisk);
@@ -657,8 +869,10 @@ void updateFromClock(bool verbose) {
     if (snow.any) {
       Serial.printf("snow: %.1f in, %d%%, starts in %.1f h -> snow risk %d on the %s bar%s; bars show left %d, right %d; sparkle: bottom %s, left %s, right %s\n",
                     snow.inches, snow.percent, (snow.start - now) / 3600.0f, snowRisk, snowOnRight ? "right" : "left",
-                    snowOverride.active ? " (overridden)" : "", riskL, riskR, bottomSparkle ? "on" : "off", leftSparkle ? "on" : "off", rightSparkle ? "on" : "off");
+                    snowIsEmergency ? " (city snow emergency)" : snowOverride.active ? " (overridden)" : "", riskL, riskR, bottomSparkle ? "on" : "off", leftSparkle ? "on" : "off", rightSparkle ? "on" : "off");
     } else Serial.println("snow: none forecast");
+    SnowEmergencyState esv;
+    if (currentEmergency(&esv)) printEmergencyState("emergency", esv, now);
     Serial.printf("top sparkle %s\n", topSparkle ? "on" : "off");
     const char* why = nullptr;
     WasteState ws = wasteState(now, &why);
@@ -721,7 +935,10 @@ void handle(String line) {
   String cmd = sp < 0 ? line : line.substring(0, sp);
   String arg = sp < 0 ? "" : line.substring(sp + 1);
   arg.trim();
-  if (cmd != "status" && cmd != "risk" && cmd != "precip" && cmd != "high" && cmd != "snow" && cmd != "forecast") { sweepActive = false; suiteActive = false; }   // any other command ends a sweep or test suite
+  if (cmd != "status" && cmd != "risk" && cmd != "precip" && cmd != "high" && cmd != "snow" && cmd != "emergency" && cmd != "forecast") {
+    sweepActive = false;
+    if (suiteActive) { suiteActive = false; suiteRestore(); }
+  }   // any other command ends a sweep or test suite
 
   if (cmd == "left")        { clockMode = false; setLeft(arg.toInt(), current);   Serial.printf("left %d\n", leftBar.n); }
   else if (cmd == "right")  { clockMode = false; setRight(arg.toInt(), current);  Serial.printf("right %d\n", rightBar.n); }
@@ -756,6 +973,40 @@ void handle(String line) {
       Serial.printf("snow override: %d%%, %.1f in, starting in %.1f h\n", snowOverride.percent, snowOverride.inches,
                     constrain(hours, -48.0f, 504.0f));
     }
+    updateFromClock(true);
+  }
+  else if (cmd == "emergency") {
+    String a = arg;
+    a.trim();
+    if (a.length() == 0) { printEmergency(); return; }
+    String sub = a, rest = "";
+    int sp2 = a.indexOf(' ');
+    if (sp2 >= 0) { sub = a.substring(0, sp2); rest = a.substring(sp2 + 1); rest.trim(); }
+    if (sub == "off") {
+      emergencyOverride = false;
+      Serial.println("emergency override off (using the city feed)");
+    } else if (sub == "start" || sub == "stop") {
+      time_t when;
+      if (!parseWhen(rest.c_str(), &when)) {
+        Serial.println("usage: emergency start|stop WHEN | emergency off | emergency   (WHEN: now, +H, -H, or YYYY-MM-DD HH:MM)");
+        return;
+      }
+      if (sub == "start") {
+        emergencyOverrideState.start = when;
+        emergencyOverrideState.end = 0;
+      } else {
+        SnowEmergencyState base;
+        if (!currentEmergency(&base)) { Serial.println("no emergency to stop; use: emergency start WHEN"); return; }
+        if (when <= base.start) { Serial.println("the end must be after the start"); return; }
+        emergencyOverrideState.start = base.start;
+        emergencyOverrideState.end = when;
+      }
+      emergencyOverride = true;
+    } else {
+      Serial.println("usage: emergency start|stop WHEN | emergency off | emergency   (WHEN: now, +H, -H, or YYYY-MM-DD HH:MM)");
+      return;
+    }
+    printEmergency();
     updateFromClock(true);
   }
   else if (cmd == "forecast") printForecast();
@@ -794,6 +1045,7 @@ void handle(String line) {
     updateFromClock(true);
   }
   else if (cmd == "test-suite") {
+    if (!suiteActive) { suiteSavedOverride = emergencyOverride; suiteSavedState = emergencyOverrideState; }
     suiteIndex = 0;
     suiteActive = true;
     Serial.printf("test-suite: %d cases, one every %lu s; any other command stops it\n",
@@ -812,7 +1064,7 @@ void handle(String line) {
                   topState.breathPct, bottomMarch.speed, clockMode ? "on" : "off",
                   RUN_LEN, DATA_PIN_A, DATA_PIN_B);
   }
-  else Serial.println("commands: left N | right N | bottom S | precip P|off | high C|off | snow P IN H|off | forecast | color X | bright B | off | time [YYYY-MM-DD HH:MM] | test-suite | risk H | status");
+  else Serial.println("commands: left N | right N | bottom S | precip P|off | high C|off | snow P IN H|off | emergency [start|stop WHEN|off] | forecast | color X | bright B | off | time [YYYY-MM-DD HH:MM] | test-suite | risk H | status");
 }
 
 String inbuf;
@@ -834,6 +1086,9 @@ void setup() {
   WiFi.begin(WIFI_SSID, WIFI_PASS);                      // non-blocking; the renderer keeps running
   configTzTime(TZ_EASTERN, "pool.ntp.org", "time.nist.gov");
   forecastMutex = xSemaphoreCreateMutex();
+  emergencyMutex = xSemaphoreCreateMutex();
+  restoreEmergencyState();
+  if (emergency.state.start) Serial.println("snow emergency: state restored from flash");
   xTaskCreatePinnedToCore(weatherTask, "weather", 20480, nullptr, 1, nullptr, 0);   // core 0; the Arduino loop runs on core 1
   // Keep handy for testing without wifi
 //  setenv("TZ", TZ_EASTERN, 1);
@@ -860,8 +1115,9 @@ void loop() {
     lastClockUpdateMs = millis();
     updateFromClock(false);
   }
-  if (clockMode && weatherUpdated) {         // a new forecast arrived: show it now, not at the next minute
+  if (clockMode && (weatherUpdated || emergencyUpdated)) {   // a new forecast or emergency arrived: show it now, not at the next minute
     weatherUpdated = false;
+    emergencyUpdated = false;
     updateFromClock(false);
   }
   renderFrame();
