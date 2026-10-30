@@ -137,7 +137,7 @@ The center 20 pixels are always illuminated.  On a day with an unremarkable weat
 
 ### 3.2 Deviations from typical for today's forecast high temperature
 
-The forecast high temperature for today is compared to the [typical](docs/typical-high-temperatures.csv) high temperature for the current day of the year.
+The forecast high temperature for today is compared to the [typical](typical-high-temperatures.csv) high temperature for the current day of the year.
 
 e.g. if today is April 23 and the forecast high temperature is 22.8ºC, that is compared to the historically typical high temperature for April 23 in Boston which is 15.6ºC and it is determined that today's forecast high is 7.2ºC higher than typical.  This number guides the display.
 
