@@ -31,11 +31,13 @@ This makes the risk grow faster the closer it gets to 5pm the day before street 
 
 Snow emergencies are declared if more than 4 inches of snow are predicted.  Parking $risk$ is a function of:
 
-- $percent$ forecast of snow
+- $percent$ forecast of snow probability
 - $inches$ of snow forecasted
 - $hours$ until start of snow
 
-If $percent$ is 100% and $inches$ forecast is >=4 we use determine risk with the street cleaning function above, and the number of hours until the snow is forecast to start is used for $remaining$. So it acts as if there was scheduled street cleaning *ending* at the time the snow is forecasted to *begin*. If the city declares an actual snow emergency then the start of the parking ban is used to calculate $remaining$ instead of start of snow forecast.
+If $percent$ is 100% and $inches$ forecast is >=4 we determine risk with the street cleaning function above, and the number of hours until the snow is forecast to start is used for $remaining$. So it acts as if there was scheduled street cleaning *ending* at the time the snow is forecasted by NWS to *begin*.
+
+If the city declares an actual snow emergency then it is treated as a 100% chance of 4 inches of snow forecasted to start at the start time of the snow emergency.  Once the snow emergency start time arrives, parking $risk$ for the appropriate side of the street will remain at maximum until the end time of the snow emergency arrives.  After the end time of the snow emergency that snow emergency is disregarded in $risk$ calculations.
 
 If inches forecast is < 4 then the risk function result is multiplied by $\frac{inches}{4}$. If $percent$ is less than 100% then the risk function result is multipled by $percent$.
 
@@ -43,7 +45,6 @@ If the risk function output is high enough to result in marching animation of th
 
 #### 1.2.1 Details
 
-- Only the NWS forecast is used; the start of an actual city snow emergency is not (yet).
 - The forecast covers today and the next three days, so at least 72 hours ahead at any time of day (about 96 hours at the start of a day). Each snowy day is its own snow event with its own amount, probability and start time, and the risk is worked out for each event: the highest one is used, so an earlier small or unlikely snowfall never hides a later bigger one. The one exception is a storm that crosses midnight, which the feed splits across two days: a day whose snow starts at local midnight (the snow was already falling) continues the previous day's storm, and the two are added together (inches summed, largest probability, earliest start). Trace snow is ignored.
 - "Multiplied by $percent$" means by $percent / 100$. The two reductions combine: 2 inches at 50% gives $risk \times \frac{2}{4} \times 0.5$.
 - During a snow emergency parking is allowed on only one side of the street: the left side when winter begins in an even-numbered year (winter 2026/27), the right side when it begins in an odd-numbered year (2027/28), alternating every year. The snow risk therefore applies to the *other* bar only, the bar for the side where parking is banned: the right bar from mid-2026 to mid-2027, the left bar from mid-2027 to mid-2028, and so on. That bar shows the larger of its street cleaning risk and the snow risk; the other bar is unaffected by snow. A winter begins on July 1 (`SNOW_YEAR_START_MONTH`).

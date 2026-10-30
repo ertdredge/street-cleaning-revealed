@@ -4,7 +4,7 @@
 
 ## 1. Purpose and one-paragraph summary
 
-Outdoor LED art installation that frames a window of roughly **38.5" x 60"*. The bottom strip animates to urge parallel parked cars to the safe side of the street when street cleaning is imminent, and changes color based on trash collection or yard waste collection. The top strip shows the day's weather forecast (a default display, and a breathing animation when precipitation is forecast; temperature and snow come later). The **two side strips act as bar graphs** whose displayed value ranges over **0–90** and is **updated hourly**, with colors and values that reflect how risky it is to park on that side of the street. Control is by an **ESP32 microcontroller running FastLED**. The controller uses **WiFi and HTTPS** to read the National Weather Service forecast for the top strip; a later phase will also use the forecast to track parking snow emergencies.
+Outdoor LED art installation that frames a window of roughly **38.5" x 60"*. The bottom strip animates to urge parallel parked cars to the safe side of the street when street cleaning is imminent, and changes color based on trash collection or yard waste collection. The top strip shows the day's weather forecast (a default display, and a breathing animation when precipitation is forecast; temperature and snow come later). The **two side strips act as bar graphs** whose displayed value ranges over **0–90** and is **updated hourly**, with colors and values that reflect how risky it is to park on that side of the street. Control is by an **ESP32 microcontroller running FastLED**. The controller uses **WiFi and HTTPS** to read the National Weather Service forecast, which drives the top strip and the forecast snow risk on the side bars, and the City of Somerville's news feed, which reports parking snow emergencies the city actually declares.
 
 ---
 
@@ -19,7 +19,7 @@ Outdoor LED art installation that frames a window of roughly **38.5" x 60"*. The
 | Top | Weather forecast for today (tomorrow's from 5 pm): three groups of 20 pixels for cold, temperate and hot; breathing when precipitation is forecast. See `Ambient-Display-Encoding.md` section 3. |
 | Sides | Bar graphs, values 0–90, updated hourly. |
 | Firmware | FastLED on ESP32. |
-| Connectivity | WiFi + HTTPS to fetch the NWS gridpoint forecast hourly (design: `weather-feed.md`). Later: use it to track parking snow emergencies. |
+| Connectivity | WiFi + HTTPS to fetch the NWS gridpoint forecast hourly (design: `weather-feed.md`) and the city's news RSS feed hourly for declared parking snow emergencies (design: `snow-emergency-feed.md`). |
 
 ### 2.2 Visibility
 
@@ -42,7 +42,7 @@ The project will illustrate the number of days remaining to a biweekly street cl
 
 Trash and yard waste collection is every Wednesday on this street unless delayed to Thursday by a holliday.
 
-Snow emergencies are called by the city periodicallly and parking is prohibited on one side of the street or the other.  Evenutally this information will be retrieved from the internet and incorporated into the display.
+Snow emergencies are called by the city periodically and parking is prohibited on one side of the street or the other. Until the city declares one, the side bars use the NWS snow forecast (Phase W, W6). Declared emergencies are read from the city's news RSS feed: the parser and tracker are written and tested, and wiring them into the display is still to do (Phase S; design in `snow-emergency-feed.md`).
 
 The top strip shows the weather forecast instead of repeating the bottom strip. Encoding rules are in `Ambient-Display-Encoding.md` section 3; the forecast source, derived values and failure policy are in `weather-feed.md`. A fetch failure or a forecast older than 12 hours leaves the top strip completely dark.
 
@@ -241,7 +241,29 @@ Encoding: `Ambient-Display-Encoding.md` section 3.
 3. ✅ **W3. No-data state.** The top strip is completely dark when there is no forecast or it is stale.
 4. ✅ **W4. Deviations from typical (3.2).** The forecast high for the displayed day is compared with `docs/typical-high-temperatures.csv` (366 rows including February 29, compiled into the sketch by `bin/make-typical-highs`). Scarlett grows into the hot group (one pixel per half degree) and bleeds into the center (10% per pixel); sky blue mirrors it on the cold side. Pure logic and host tests: `weather-display.h/.cpp`, `test/weather-display-test.cpp`. Serial: `high C|off` overrides the forecast high.
 5. ✅ **W5. Snow or sleet (3.3.1).** Random pixels of the top strip flash white (and fade over `SPARKLE_SECONDS`, `SPARKLE_PER_SEC` new flashes a second) when snow is forecast for the displayed day. The feed carries snow accumulation only, so sleet is not distinguished.
-6. ✅ **W6. Snow removal risk (1.2), NWS data only.** The snow forecasts for today and the next three days (at least 72 hours ahead) are examined as separate snow events (a storm split across midnight is rejoined), and the riskiest event counts; the street cleaning risk function is evaluated for the hours until the snow starts, then scaled by inches / 4 (under 4 in) and percent / 100. Only the bar for the side where snow-emergency parking is banned (right in winter 2026/27, left in 2027/28, alternating from July 1) shows the larger of that and its street cleaning risk; above the march threshold (55) the bottom strip also sparkles, and the whole snow bar sparkles whenever the snow risk exceeds its street cleaning risk. Actual city-declared snow emergencies are not used yet. Pure logic and host tests: `snow-risk.h/.cpp`, `test/snow-risk-test.cpp`. Serial: `snow P IN H|off` overrides the snow forecast.
+6. ✅ **W6. Snow removal risk (1.2), NWS data only.** The snow forecasts for today and the next three days (at least 72 hours ahead) are examined as separate snow events (a storm split across midnight is rejoined), and the riskiest event counts; the street cleaning risk function is evaluated for the hours until the snow starts, then scaled by inches / 4 (under 4 in) and percent / 100. Only the bar for the side where snow-emergency parking is banned (right in winter 2026/27, left in 2027/28, alternating from July 1) shows the larger of that and its street cleaning risk; above the march threshold (55) the bottom strip also sparkles, and the whole snow bar sparkles whenever the snow risk exceeds its street cleaning risk. Actual city-declared snow emergencies are not used yet (Phase S). Pure logic and host tests: `snow-risk.h/.cpp`, `test/snow-risk-test.cpp`. Serial: `snow P IN H|off` overrides the snow forecast.
+
+### Phase S — City-declared snow emergencies
+
+Design: `snow-emergency-feed.md`. Display rule: `Ambient-Display-Encoding.md` 1.2 ("If the city declares an actual snow emergency then the start of the parking ban is used to calculate $remaining$").
+
+1. ✅ **S1. Source selection (2026-10-30).** The city publishes no machine-readable status, and the Everbridge API and CAP feed are available only to the sending organization. The city's news RSS feed (`https://www.somervillema.gov/news.xml`) is the sole source, parsed on the ESP32 with no server-side relay. Coverage check against the City Alerts emails, 2024–2026: four of ten alerts had no news item, all before February 9, 2025; all five since then had one.
+2. ✅ **S2. Headline parser, RSS scanner and tracker (2026-10-30).** `snow-emergency.h/.cpp`, plain C++ with no Arduino headers. The parser recognizes declaration and end headlines and extracts the time, date and (inferred) year. The scanner streams the feed (about 7 KB kept, never the body). The tracker keeps the start and end of the parking ban, survives missed and repeated items, and drops an emergency with no announced end after 96 hours. Host tests: `test/snow-emergency-test.cpp` (119 checks, all real 2024–2026 headlines), fixtures in `test/data/snow-emergency/`.
+3. ✅ **S3. Fetch layer.** `HttpsForecastSource::open()` takes an optional `accept` header (default unchanged, `application/geo+json`), so the same class fetches the RSS feed.
+4. ✅ **S4. Live check (2026-10-30).** `curl -s https://www.somervillema.gov/news.xml | ./snow-emergency-test -` read all 10 live items, with no notices.
+5. **S5. Wire into `street-cleaning-revealed.ino`.** Not started. Outline in `weather-feed.md` section 9.3 and `snow-emergency-feed.md` section 6.3:
+   - Hourly fetch on core 0 after WiFi and the clock, one TLS session at a time (in the weather task or its own task). `RssScanner` static, not on the task stack. Keep the state on a failed fetch or a body that is not a feed; retry sooner.
+   - The tracker shared with the renderer under a mutex.
+   - `state.start` and `state.end` saved to NVS (`Preferences`) when they change and restored in `setup()`. Without this a reboot during an emergency loses it once the declaration has left the 10-item feed.
+   - In the snow removal risk, while the phase is not none, a full-size snow event (`SNOW_EMERGENCY_INCHES`, 100%) starting at `state.start`. Left out while the clock is simulated.
+   - Decide whether an announced end should suppress forecast snow events that would otherwise hold the bar at 90 until local midnight.
+   - Serial: `emergency` (state, phase, last fetch outcome) and an override in the style of `snow P IN H|off`. Add test-suite cases.
+   - First compile of `snow-emergency.cpp` for the ESP32 (so far host-compiled only).
+6. **S6. Documentation after wiring.** Update `Ambient-Display-Encoding.md` 1.2.1 ("Only the NWS forecast is used…") and the Phase W, W6 note.
+7. **S7. Explainer headlines (optional).** Treat a headline with `?`, or with *when / if / what / how / why / before / after* just before "snow emergency", as not a notice (`snow-emergency-feed.md` 4.6). Harmless today: untimed declarations are ignored.
+8. **S8. Real fixture.** Capture the raw feed during the first emergency of winter 2026/27 and add it to `test/data/snow-emergency/`.
+
+*Exit criteria:* a declared emergency moves the snow bar on schedule from the feed alone, survives a reboot, and clears at its announced end (or 96 hours after its start).
 
 ### Phase D — Deployment design
 
@@ -278,10 +300,13 @@ ESPTOOL=$(find ~/Library/Arduino15/packages/esp32/tools/esptool_py -type f -name
 # One-time: libraries and secrets
 arduino-cli lib install ArduinoJson          # 7.x; every .cpp in the sketch folder is compiled, so install it before building
 # src/street-cleaning-revealed/secrets.h (git-ignored) must define WIFI_SSID, WIFI_PASS and NWS_USER_AGENT
-# (NWS asks for a contact email in the User-Agent)
+# (NWS asks for a contact email in the User-Agent; the snow emergency fetch reuses it)
 
-# Host tests for the forecast parser and the top-strip display (no hardware)
+# Host tests: forecast parser, top-strip display, snow risk, snow emergency feed (no hardware)
 cd test && make test
+
+# How the live city news feed is read (snow emergency notices, resulting state)
+curl -s https://www.somervillema.gov/news.xml | ./snow-emergency-test -
 ```
 
 **Power-up:** adapter first, then USB. **Power-down:** USB first, then adapter.
@@ -311,3 +336,4 @@ cd test && make test
 - FastLED documentation and issue tracker (WS2815 support; `WS2812B` as portable choice).
 - BTF-LIGHTING product listings and packaging text (wire colors, warnings, ratings).
 - National Weather Service API (`api.weather.gov`, gridpoint `BOX/70,102`) and ArduinoJson 7.x; source selection and derived values are in `docs/weather-feed.md`.
+- City of Somerville snow information (`somervillema.gov/snow`), City Alerts (`somervillema.gov/alerts`), the news RSS feed (`somervillema.gov/news.xml`), and the Everbridge developer and support documentation; source selection and the headline grammar are in `docs/snow-emergency-feed.md`.

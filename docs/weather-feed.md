@@ -55,7 +55,7 @@ GET https://api.weather.gov/gridpoints/BOX/70,102
 
 - The grid cell is resolved once from `/points/42.3876,-71.0995`, which returns office `BOX`, grid X 70, Y 102, and is then fixed in the design. The device never makes the lookup.
 - `User-Agent` names the project and carries a contact address, as NWS requests, so that NWS can reach the owner if traffic ever misbehaves.
-- `Accept: application/geo+json`. No `Accept-Encoding`, so the body arrives uncompressed and can be streamed straight into the parser.
+- `Accept: application/geo+json` (the default of `HttpsForecastSource::open()`'s `accept` argument; the snow emergency feed passes `application/rss+xml`, section 9). No `Accept-Encoding`, so the body arrives uncompressed and can be streamed straight into the parser.
 - HTTP/1.0 is requested so the server does not use chunked transfer encoding; chunk-size lines in the middle of the JSON would be indistinguishable from a corrupt feed. If a server chunks anyway, `DechunkingSource` removes the framing (it tells the two apart by the first byte: JSON starts with `{`, a chunk size with a hex digit).
 - Redirects are followed, since NWS can renumber grid cells.
 - TLS verification is off by default (public, read-only data driving an art installation), with the option to pin a root certificate.
@@ -212,3 +212,42 @@ The design separates the parts that need no hardware from the part that does, fo
 | A second weather source | Section 2.2. |
 | Calibrated snow probability (e.g. from the Weather Prediction Center's probabilistic snowfall products) | Published as images, not as a data feed. |
 
+---
+
+## 9. The snow emergency feed
+
+City-declared parking snow emergencies come from a second source, the city's news RSS feed (`https://www.somervillema.gov/news.xml`). The full design is in `snow-emergency-feed.md`. This section covers what the sketch needs to wire it in. The wiring is not done yet (Project-Plan.md, Phase S).
+
+### 9.1 Relation to this module
+
+| | Weather feed | Snow emergency feed |
+|---|---|---|
+| Source | NWS gridpoint JSON, about 290 KB | City news RSS, about 8 KB, 10 items |
+| Pure module | `weather-forecast.h/.cpp` (needs ArduinoJson) | `snow-emergency.h/.cpp` (C library only) |
+| Fetch | `HttpsForecastSource` | The same class, with `accept = "application/rss+xml"` |
+| Result | A snapshot that expires after 12 hours | Two times (start and end of the parking ban), kept until the emergency ends |
+| On a failed fetch | Keep the snapshot | Keep the state |
+| Across a reboot | Lost (C6, optional) | Must be saved in NVS: the declaration leaves the feed within days |
+| Display use | Snow events from the forecast (`snow-risk.h`) | A full-size snow event starting when the ban starts |
+
+`HttpsForecastSource::open(url, userAgent, timeoutMs = 20000, rootCaPem = nullptr, accept = "application/geo+json")` is a plain HTTPS byte stream. `scanRss()` reads it to the end through `readBytes()`, exactly as the forecast parser does.
+
+### 9.2 Interface used by the sketch
+
+| Call | Purpose |
+|---|---|
+| `RssScanner rss;` `rss.reset();` | Holds the items of one fetch (about 7 KB; make it static, not a task-stack local) |
+| `scanRss(feed, rss)` | Streams the body into the scanner; keeps each item's title, `pubDate` and link |
+| `rss.sawFeed()` | False for an HTML error page or an empty body: keep the previous state |
+| `SnowEmergency emergency;` | The tracker. `emergency.state` (`start`, `end`, `time_t`, 0 = unknown) is public for saving and restoring |
+| `emergency.update(rss, now)` | Replays the feed oldest item first and applies every snow emergency notice; repeating it changes nothing |
+| `emergency.phase(now)` | `SNOW_EMERGENCY_NONE`, `SNOW_EMERGENCY_DECLARED` (before the start) or `SNOW_EMERGENCY_IN_EFFECT` |
+| `emergency.apply(parseSnowNotice(title, published), published, now)` | One headline by hand, for a serial test command |
+| `snowEmergencyPhaseName()`, `snowNoticeKindName()` | Short names for serial output |
+
+### 9.3 Wiring outline
+
+1. **Fetch** hourly on core 0, after WiFi and the clock, one TLS session at a time (in the weather task after the forecast fetch, or a task of its own). Open with `accept = "application/rss+xml"`, `rss.reset()`, `scanRss`, `close`.
+2. **Update** a copy of the tracker with `update(rss, realNow())` only if `sawFeed()`. Publish it under a mutex for the renderer on core 1, and save `state.start` and `state.end` to `Preferences` when they change. Restore them in `setup()`.
+3. **Use** it in the snow removal risk. While `phase(realNow()) != SNOW_EMERGENCY_NONE`, add `SnowEvent{ true, SNOW_EMERGENCY_INCHES, 100, state.start }` to the events from `currentSnowEvents()`. `snowRiskFrom()` then gives the cleaning-risk curve up to the ban and 90 during it, on the bar that `snowRiskOnRightBar()` selects. Leave it out while the clock is simulated, as the real forecast is.
+4. **Observe and test** with serial commands: `emergency` to print the state, phase and last fetch outcome, and an override in the style of `snow P IN H|off`.
