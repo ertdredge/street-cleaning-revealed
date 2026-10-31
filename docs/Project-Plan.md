@@ -300,7 +300,8 @@ ESPTOOL=$(find ~/Library/Arduino15/packages/esp32/tools/esptool_py -type f -name
 
 # One-time: libraries and secrets
 arduino-cli lib install ArduinoJson          # 7.x; every .cpp in the sketch folder is compiled, so install it before building
-# src/street-cleaning-revealed/secrets.h (git-ignored) must define WIFI_SSID, WIFI_PASS and NWS_USER_AGENT
+# src/street-cleaning-revealed/secrets.h (git-ignored) must define WIFI_SSID, WIFI_PASS and NWS_USER_AGENT,
+# and LOKI_URL (base URL), LOKI_USER and LOKI_TOKEN for Grafana Cloud logging (see docs/logging.md)
 # (NWS asks for a contact email in the User-Agent; the snow emergency fetch reuses it)
 
 # Host tests: forecast parser, top-strip display, snow risk, snow emergency feed (no hardware)

@@ -69,6 +69,7 @@
 #include "weather-display.h"    // top strip image from the forecast high vs the typical high (pure)
 #include "snow-risk.h"          // snow removal parking risk from the NWS forecast (pure)
 #include "snow-emergency.h"     // City of Somerville snow emergencies, from the city news RSS feed (pure)
+#include "loki-log.h"           // logMsg(): Serial plus Grafana Cloud Loki (ESP32 only; needs LOKI_URL, LOKI_USER, LOKI_TOKEN in secrets.h)
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -399,7 +400,7 @@ bool pollSnowEmergency() {
   if (!feed.open(SNOW_URL, NWS_USER_AGENT, 20000, nullptr, "application/rss+xml")) {
     lastEmergencyStatus = EM_FETCH_FAILED;
     lastEmergencyHttp = feed.httpStatus();
-    Serial.printf("snow emergency: fetch failed (http %d); trying again in %lu s\n", lastEmergencyHttp,
+    logMsg(LOGLVL_WARN, "snow emergency: fetch failed (http %d); trying again in %lu s\n", lastEmergencyHttp,
                   (unsigned long)(EMERGENCY_RETRY_MS / 1000UL));
     return false;
   }
@@ -410,7 +411,7 @@ bool pollSnowEmergency() {
   feed.close();
   if (!rss.sawFeed()) {
     lastEmergencyStatus = EM_NOT_A_FEED;
-    Serial.printf("snow emergency: not a feed (http %d, %u bytes); trying again in %lu s\n", lastEmergencyHttp,
+    logMsg(LOGLVL_WARN, "snow emergency: not a feed (http %d, %u bytes); trying again in %lu s\n", lastEmergencyHttp,
                   (unsigned)rss.bytes(), (unsigned long)(EMERGENCY_RETRY_MS / 1000UL));
     return false;
   }
@@ -426,7 +427,7 @@ bool pollSnowEmergency() {
   lastEmergencyStatus = EM_OK;
   lastEmergencyNotices = notices;
   lastEmergencyAt = now;
-  Serial.printf("snow emergency: read %d feed items, %d snow notices%s\n", rss.count(), notices, changed ? ", state changed" : "");
+  logMsg(LOGLVL_INFO, "snow emergency: read %d feed items, %d snow notices%s\n", rss.count(), notices, changed ? ", state changed" : "");
   if (changed) {
     saveEmergencyState(next.state);
     emergencyUpdated = true;
@@ -446,7 +447,7 @@ void weatherTask(void*) {
     time_t now = realNow();
     bool ready = WiFi.status() == WL_CONNECTED && now >= CLOCK_VALID_AFTER;   // else look again shortly
     if (ready && (int32_t)(millis() - forecastDue) >= 0) {
-      Serial.println("weather: fetching");
+      logMsg(LOGLVL_INFO, "weather: fetching\n");
       uint32_t t0 = millis();
       HttpsForecastSource raw;
       raw.open(NWS_URL, NWS_USER_AGENT);   // a failed open reads as empty, so update() reports an io error
@@ -462,20 +463,20 @@ void weatherTask(void*) {
         weatherUpdated = true;
         failures = 0;
         waitMs = WEATHER_POLL_MS;
-        Serial.printf("weather: forecast updated in %.1f s, free heap %u\n", lastFetchSeconds, (unsigned)ESP.getFreeHeap());
+        logMsg(LOGLVL_INFO, "weather: forecast updated in %.1f s, free heap %u\n", lastFetchSeconds, (unsigned)ESP.getFreeHeap());
       } else {
         // Retry soon at first (after a boot WiFi or DNS may not be settled), then back off to the normal retry.
         static const uint32_t BACKOFF_MS[] = { 15000UL, 30000UL, 60000UL, 120000UL };
         waitMs = failures < 4 ? BACKOFF_MS[failures] : WEATHER_RETRY_MS;
         failures++;
-        Serial.printf("weather: fetch failed after %.1f s (%s, http %d, free heap %u); trying again in %lu s\n",
+        logMsg(LOGLVL_WARN, "weather: fetch failed after %.1f s (%s, http %d, free heap %u); trying again in %lu s\n",
                       lastFetchSeconds, forecastStatusName(st), lastFetchHttp, (unsigned)ESP.getFreeHeap(),
                       (unsigned long)(waitMs / 1000UL));
         char shown[121];                   // what the server actually sent, to diagnose a bad body
         size_t k = 0;
         for (const char* h = raw.head(); *h && k < sizeof shown - 1; h++) shown[k++] = (*h >= 32 && *h < 127) ? *h : '.';
         shown[k] = 0;
-        Serial.printf("weather: received %u bytes (%s), parsed %u; begins: \"%s\"\n", (unsigned)raw.bytesRead(),
+        logMsg(LOGLVL_WARN, "weather: received %u bytes (%s), parsed %u; begins: \"%s\"\n", (unsigned)raw.bytesRead(),
                       feed.chunked() ? "chunked" : "not chunked", (unsigned)feed.bytesOut(), shown);
       }
       raw.close();
@@ -484,6 +485,10 @@ void weatherTask(void*) {
     if (ready && (int32_t)(millis() - emergencyDue) >= 0) {
       bool ok = pollSnowEmergency();
       emergencyDue = millis() + (ok ? EMERGENCY_POLL_MS : EMERGENCY_RETRY_MS);
+    }
+    if (WiFi.status() == WL_CONNECTED) {         // ship queued log lines; Serial output never waits for this
+      time_t t = realNow();
+      lokiFlush(t >= CLOCK_VALID_AFTER ? (uint64_t)t * 1000000000ULL : 0);
     }
     vTaskDelay(pdMS_TO_TICKS(5000));
   }
@@ -589,37 +594,37 @@ void printForecast() {
   WeatherForecast snap = forecast;
   xSemaphoreGive(forecastMutex);
   time_t now = realNow();
-  if (lastFetchStatus < 0) Serial.println("forecast: no fetch attempted yet (waiting for WiFi and the clock)");
-  else Serial.printf("forecast: last fetch %s in %.1f s, http %d\n", forecastStatusName((ForecastStatus)lastFetchStatus), (float)lastFetchSeconds, (int)lastFetchHttp);
-  Serial.printf("  wifi %s, free heap %u\n", WiFi.status() == WL_CONNECTED ? "up" : "down", (unsigned)ESP.getFreeHeap());
-  if (!snap.hasData()) { Serial.println("forecast: no good data yet"); return; }
-  Serial.printf("forecast: fetched %ld min ago\n", (long)((now - snap.lastGoodAt()) / 60));
+  if (lastFetchStatus < 0) logMsg(LOGLVL_INFO, "forecast: no fetch attempted yet (waiting for WiFi and the clock)\n");
+  else logMsg(LOGLVL_INFO, "forecast: last fetch %s in %.1f s, http %d\n", forecastStatusName((ForecastStatus)lastFetchStatus), (float)lastFetchSeconds, (int)lastFetchHttp);
+  logMsg(LOGLVL_INFO, "  wifi %s, free heap %u\n", WiFi.status() == WL_CONNECTED ? "up" : "down", (unsigned)ESP.getFreeHeap());
+  if (!snap.hasData()) { logMsg(LOGLVL_INFO, "forecast: no good data yet\n"); return; }
+  logMsg(LOGLVL_INFO, "forecast: fetched %ld min ago\n", (long)((now - snap.lastGoodAt()) / 60));
   static const char* const DAY_NAMES[FORECAST_DAYS_USED] = { "today", "tomorrow", "day 2", "day 3" };
   for (int d = 0; d < FORECAST_DAYS_USED; d++) {
     TempPrecip t = snap.tempPrecip((ForecastDay)d, now);
-    if (!t.valid) { Serial.printf("  %s: no fresh data\n", DAY_NAMES[d]); continue; }
+    if (!t.valid) { logMsg(LOGLVL_INFO, "  %s: no fresh data\n", DAY_NAMES[d]); continue; }
     float typical = typicalHighForDay(now, d);
-    Serial.printf("  %s: high %.1f C (typical %.1f C, %+.1f), precipitation %d%%\n", DAY_NAMES[d],
+    logMsg(LOGLVL_INFO, "  %s: high %.1f C (typical %.1f C, %+.1f), precipitation %d%%\n", DAY_NAMES[d],
                   t.highC, typical, t.highC - typical, t.precipPercent);
     SnowOutlook sn = snap.snow((ForecastDay)d, now);
     if (sn.snowForecast()) {
       char when[40];
       fmtTime(sn.startTime, when, sizeof when);
-      Serial.printf("    snow: %.1f in, %d%%, starting %s\n", sn.amountInches(), sn.probabilityPercent, when);
+      logMsg(LOGLVL_INFO, "    snow: %.1f in, %d%%, starting %s\n", sn.amountInches(), sn.probabilityPercent, when);
     } else {
-      Serial.println("    snow: none");
+      logMsg(LOGLVL_INFO, "    snow: none\n");
     }
   }
 }
 
 // One line: label, phase, start and end of a snow emergency state.
 void printEmergencyState(const char* label, const SnowEmergencyState& st, time_t now) {
-  if (st.start == 0) { Serial.printf("%s: none\n", label); return; }
+  if (st.start == 0) { logMsg(LOGLVL_INFO, "%s: none\n", label); return; }
   char a[40], b[40];
   fmtTime(st.start, a, sizeof a);
   if (st.end) fmtTime(st.end, b, sizeof b); else strcpy(b, "not announced");
   SnowEmergencyPhase ph = emergencyPhase(st, now);
-  Serial.printf("%s: %s, ban starts %s, ends %s\n", label, ph != SNOW_EMERGENCY_NONE ? snowEmergencyPhaseName(ph) : st.end ? "ended" : "expired", a, b);
+  logMsg(LOGLVL_INFO, "%s: %s, ban starts %s, ends %s\n", label, ph != SNOW_EMERGENCY_NONE ? snowEmergencyPhaseName(ph) : st.end ? "ended" : "expired", a, b);
 }
 
 void printEmergency() {
@@ -629,15 +634,15 @@ void printEmergency() {
   xSemaphoreGive(emergencyMutex);
   printEmergencyState("emergency (city feed)", city, realNow());
   if (emergencyOverride) printEmergencyState("emergency (override)", emergencyOverrideState, now);
-  else Serial.println("emergency override: off");
+  else logMsg(LOGLVL_INFO, "emergency override: off\n");
   SnowEmergencyState used;
   if (currentEmergency(&used)) printEmergencyState("emergency in use", used, now);
-  else Serial.printf("emergency in use: none%s\n", simClockOffset != 0 && !emergencyOverride ? " (the city feed is left out while the clock is simulated)" : "");
-  if (lastEmergencyStatus == EM_NONE_YET) Serial.println("emergency poll: none yet (waiting for WiFi and the clock)");
+  else logMsg(LOGLVL_INFO, "emergency in use: none%s\n", simClockOffset != 0 && !emergencyOverride ? " (the city feed is left out while the clock is simulated)" : "");
+  if (lastEmergencyStatus == EM_NONE_YET) logMsg(LOGLVL_INFO, "emergency poll: none yet (waiting for WiFi and the clock)\n");
   else if (lastEmergencyStatus == EM_OK) {
-    Serial.printf("emergency poll: ok %ld min ago, %d snow notices in the feed\n", (long)((realNow() - lastEmergencyAt) / 60), (int)lastEmergencyNotices);
+    logMsg(LOGLVL_INFO, "emergency poll: ok %ld min ago, %d snow notices in the feed\n", (long)((realNow() - lastEmergencyAt) / 60), (int)lastEmergencyNotices);
   } else {
-    Serial.printf("emergency poll: %s (http %d)\n", lastEmergencyStatus == EM_FETCH_FAILED ? "fetch failed" : "not a feed", (int)lastEmergencyHttp);
+    logMsg(LOGLVL_INFO, "emergency poll: %s (http %d)\n", lastEmergencyStatus == EM_FETCH_FAILED ? "fetch failed" : "not a feed", (int)lastEmergencyHttp);
   }
 }
 
@@ -696,7 +701,7 @@ void sweepStep() {
   sweepNext += 3600;
   if (sweepNext > sweepEnd) {
     sweepActive = false;
-    Serial.println("sweep done");
+    logMsg(LOGLVL_INFO, "sweep done\n");
   }
 }
 
@@ -737,13 +742,13 @@ void suiteStep() {
   if (suiteIndex >= NUM_TESTS) {          // the last case has been shown for its full time
     suiteActive = false;
     suiteRestore();
-    Serial.println("\ntest-suite done");
+    logMsg(LOGLVL_INFO, "\ntest-suite done\n");
     return;
   }
   const TestCase& t = TEST_SUITE[suiteIndex];
   time_t when;
   if (!parseDateTime(t.when, &when)) {
-    Serial.printf("test-suite: bad date '%s'\n", t.when);
+    logMsg(LOGLVL_WARN, "test-suite: bad date '%s'\n", t.when);
     suiteActive = false;
     suiteRestore();
     return;
@@ -751,7 +756,7 @@ void suiteStep() {
   if (t.emStart) {                                 // this case forces an emergency
     time_t es = 0, ee = 0;
     if (!parseDateTime(t.emStart, &es) || (t.emEnd && !parseDateTime(t.emEnd, &ee))) {
-      Serial.printf("test-suite: bad emergency time in '%s'\n", t.label);
+      logMsg(LOGLVL_WARN, "test-suite: bad emergency time in '%s'\n", t.label);
       suiteActive = false;
       suiteRestore();
       return;
@@ -762,7 +767,7 @@ void suiteStep() {
   } else {
     suiteRestore();
   }
-  Serial.printf("\n=== test-suite %d/%d: %s  %s ===\n", suiteIndex + 1, NUM_TESTS, t.when, t.label);
+  logMsg(LOGLVL_INFO, "\n=== test-suite %d/%d: %s  %s ===\n", suiteIndex + 1, NUM_TESTS, t.when, t.label);
   setClockTo(when);
   updateFromClock(true);
   suiteIndex++;
@@ -777,14 +782,14 @@ void fmtTime(time_t t, char* buf, size_t n) {
 void reportSide(const char* name, time_t end, time_t now, int risk) {
   char when[40];
   fmtTime(end, when, sizeof when);
-  Serial.printf("%s: cleaning ends %s, %.1f h remaining, risk %d\n",
+  logMsg(LOGLVL_INFO, "%s: cleaning ends %s, %.1f h remaining, risk %d\n",
                 name, when, (int64_t)(end - now) / 3600.0f, risk);
 }
 
 void updateFromClock(bool verbose) {
   time_t now = time(nullptr);
   if (now < CLOCK_VALID_AFTER) {
-    if (verbose) Serial.println("clock not set yet (waiting for NTP, or use: time YYYY-MM-DD HH:MM)");
+    if (verbose) logMsg(LOGLVL_DEBUG, "clock not set yet (waiting for NTP, or use: time YYYY-MM-DD HH:MM)\n");
     return;
   }
   time_t endL = nextCleaningEnd(LEFT_SCHEDULE, now);
@@ -855,37 +860,37 @@ void updateFromClock(bool verbose) {
   if (verbose) {
     char buf[40];
     fmtTime(now, buf, sizeof buf);
-    Serial.printf("now %s\n", buf);
+    logMsg(LOGLVL_DEBUG, "now %s\n", buf);
     reportSide("left ", endL, now, cleanL);
     reportSide("right", endR, now, cleanR);
-    Serial.printf("bottom speed %d\n", speed);
+    logMsg(LOGLVL_DEBUG, "bottom speed %d\n", speed);
     if (haveWx) {
-      Serial.printf("top: %s forecast, precipitation %d%%%s, breathing %.2f Hz\n",
+      logMsg(LOGLVL_DEBUG, "top: %s forecast, precipitation %d%%%s, breathing %.2f Hz\n",
                     day == FORECAST_TOMORROW ? "tomorrow's" : "today's",
                     rawPrecip, precipOverride >= 0 ? " (overridden)" : "", breathRateHz(precip));
       if (haveDelta) {
         TopShape sh = topShapeFor(deltaC);
-        Serial.printf("top: high %.1f C%s vs typical %.1f C (%+.1f): %s\n", highC,
+        logMsg(LOGLVL_DEBUG, "top: high %.1f C%s vs typical %.1f C (%+.1f): %s\n", highC,
                       !std::isnan(highOverride) ? " (overridden)" : "", typicalC, deltaC,
                       sh.hotPixels ? "hot" : sh.coldPixels ? "cold" : "about typical");
         if (sh.hotPixels || sh.coldPixels)
-          Serial.printf("top: %d %s pixels, bleed depth %d into the center\n",
+          logMsg(LOGLVL_DEBUG, "top: %d %s pixels, bleed depth %d into the center\n",
                         sh.hotPixels + sh.coldPixels, sh.hotPixels ? "scarlett" : "sky blue", sh.hotBleed + sh.coldBleed);
       } else {
-        Serial.println("top: no forecast high, default display");
+        logMsg(LOGLVL_DEBUG, "top: no forecast high, default display\n");
       }
-    } else Serial.println("top: no forecast, dark");
+    } else logMsg(LOGLVL_DEBUG, "top: no forecast, dark\n");
     if (snow.any) {
-      Serial.printf("snow: %.1f in, %d%%, starts in %.1f h -> snow risk %d on the %s bar%s; bars show left %d, right %d; sparkle: bottom %s, left %s, right %s\n",
+      logMsg(LOGLVL_DEBUG, "snow: %.1f in, %d%%, starts in %.1f h -> snow risk %d on the %s bar%s; bars show left %d, right %d; sparkle: bottom %s, left %s, right %s\n",
                     snow.inches, snow.percent, (snow.start - now) / 3600.0f, snowRisk, snowOnRight ? "right" : "left",
                     snowIsEmergency ? " (city snow emergency)" : snowOverride.active ? " (overridden)" : "", riskL, riskR, bottomSparkle ? "on" : "off", leftSparkle ? "on" : "off", rightSparkle ? "on" : "off");
-    } else Serial.println("snow: none forecast");
+    } else logMsg(LOGLVL_DEBUG, "snow: none forecast\n");
     SnowEmergencyState esv;
     if (currentEmergency(&esv)) printEmergencyState("emergency", esv, now);
-    Serial.printf("top sparkle %s\n", topSparkle ? "on" : "off");
+    logMsg(LOGLVL_DEBUG, "top sparkle %s\n", topSparkle ? "on" : "off");
     const char* why = nullptr;
     WasteState ws = wasteState(now, &why);
-    Serial.printf("waste: %s%s%s%s\n",
+    logMsg(LOGLVL_DEBUG, "waste: %s%s%s%s\n",
                   ws == WASTE_PUT_OUT ? "put out now" : ws == WASTE_PUT_OUT_YARD ? "put out now, with yard waste"
                   : ws == WASTE_SKIPPED ? "skipped (holiday)" : "idle",
                   why ? " [delayed by " : "", why ? why : "", why ? "]" : "");
@@ -949,37 +954,37 @@ void handle(String line) {
     if (suiteActive) { suiteActive = false; suiteRestore(); }
   }   // any other command ends a sweep or test suite
 
-  if (cmd == "left")        { clockMode = false; setLeft(arg.toInt(), current);   Serial.printf("left %d\n", leftBar.n); }
-  else if (cmd == "right")  { clockMode = false; setRight(arg.toInt(), current);  Serial.printf("right %d\n", rightBar.n); }
-  else if (cmd == "bottom") { clockMode = false; setBottom(current, arg.toInt()); Serial.printf("bottom speed %d\n", bottomMarch.speed); }
-  else if (cmd == "off")    { allOff(); Serial.println("off"); }
+  if (cmd == "left")        { clockMode = false; setLeft(arg.toInt(), current);   logMsg(LOGLVL_INFO, "left %d\n", leftBar.n); }
+  else if (cmd == "right")  { clockMode = false; setRight(arg.toInt(), current);  logMsg(LOGLVL_INFO, "right %d\n", rightBar.n); }
+  else if (cmd == "bottom") { clockMode = false; setBottom(current, arg.toInt()); logMsg(LOGLVL_INFO, "bottom speed %d\n", bottomMarch.speed); }
+  else if (cmd == "off")    { allOff(); logMsg(LOGLVL_INFO, "off\n"); }
   else if (cmd == "precip") {
     if (arg == "off") precipOverride = -1;
     else if (arg.length()) precipOverride = constrain(arg.toInt(), 0, 100);
-    if (precipOverride >= 0) Serial.printf("precip override %d%%\n", precipOverride);
-    else Serial.println("precip override off (using the forecast)");
+    if (precipOverride >= 0) logMsg(LOGLVL_INFO, "precip override %d%%\n", precipOverride);
+    else logMsg(LOGLVL_INFO, "precip override off (using the forecast)\n");
     updateFromClock(true);
   }
   else if (cmd == "high") {
     if (arg == "off") highOverride = NAN;
     else if (arg.length()) highOverride = constrain(arg.toFloat(), -60.0f, 60.0f);
-    if (!std::isnan(highOverride)) Serial.printf("high override %.1f C\n", highOverride);
-    else Serial.println("high override off (using the forecast)");
+    if (!std::isnan(highOverride)) logMsg(LOGLVL_INFO, "high override %.1f C\n", highOverride);
+    else logMsg(LOGLVL_INFO, "high override off (using the forecast)\n");
     updateFromClock(true);
   }
   else if (cmd == "snow") {
-    if (arg == "off") { snowOverride.active = false; Serial.println("snow override off (using the forecast)"); }
+    if (arg == "off") { snowOverride.active = false; logMsg(LOGLVL_INFO, "snow override off (using the forecast)\n"); }
     else if (arg.length()) {
       int p; float inches, hours;
       if (sscanf(arg.c_str(), "%d %f %f", &p, &inches, &hours) != 3) {
-        Serial.println("usage: snow PERCENT INCHES HOURS   (HOURS until the snow starts, negative if already falling) | snow off");
+        logMsg(LOGLVL_WARN, "usage: snow PERCENT INCHES HOURS   (HOURS until the snow starts, negative if already falling) | snow off\n");
         return;
       }
       snowOverride.active = true;
       snowOverride.percent = constrain(p, 0, 100);
       snowOverride.inches = constrain(inches, 0.0f, 60.0f);
       snowOverride.start = time(nullptr) + (time_t)(constrain(hours, -48.0f, 504.0f) * 3600.0f);
-      Serial.printf("snow override: %d%%, %.1f in, starting in %.1f h\n", snowOverride.percent, snowOverride.inches,
+      logMsg(LOGLVL_INFO, "snow override: %d%%, %.1f in, starting in %.1f h\n", snowOverride.percent, snowOverride.inches,
                     constrain(hours, -48.0f, 504.0f));
     }
     updateFromClock(true);
@@ -993,11 +998,11 @@ void handle(String line) {
     if (sp2 >= 0) { sub = a.substring(0, sp2); rest = a.substring(sp2 + 1); rest.trim(); }
     if (sub == "off") {
       emergencyOverride = false;
-      Serial.println("emergency override off (using the city feed)");
+      logMsg(LOGLVL_INFO, "emergency override off (using the city feed)\n");
     } else if (sub == "start" || sub == "stop") {
       time_t when;
       if (!parseWhen(rest.c_str(), &when)) {
-        Serial.println("usage: emergency start|stop WHEN | emergency off | emergency   (WHEN: now, +H, -H, or YYYY-MM-DD HH:MM)");
+        logMsg(LOGLVL_WARN, "usage: emergency start|stop WHEN | emergency off | emergency   (WHEN: now, +H, -H, or YYYY-MM-DD HH:MM)\n");
         return;
       }
       if (sub == "start") {
@@ -1005,14 +1010,14 @@ void handle(String line) {
         emergencyOverrideState.end = 0;
       } else {
         SnowEmergencyState base;
-        if (!currentEmergency(&base)) { Serial.println("no emergency to stop; use: emergency start WHEN"); return; }
-        if (when <= base.start) { Serial.println("the end must be after the start"); return; }
+        if (!currentEmergency(&base)) { logMsg(LOGLVL_WARN, "no emergency to stop; use: emergency start WHEN\n"); return; }
+        if (when <= base.start) { logMsg(LOGLVL_WARN, "the end must be after the start\n"); return; }
         emergencyOverrideState.start = base.start;
         emergencyOverrideState.end = when;
       }
       emergencyOverride = true;
     } else {
-      Serial.println("usage: emergency start|stop WHEN | emergency off | emergency   (WHEN: now, +H, -H, or YYYY-MM-DD HH:MM)");
+      logMsg(LOGLVL_WARN, "usage: emergency start|stop WHEN | emergency off | emergency   (WHEN: now, +H, -H, or YYYY-MM-DD HH:MM)\n");
       return;
     }
     printEmergency();
@@ -1020,31 +1025,31 @@ void handle(String line) {
   }
   else if (cmd == "forecast") printForecast();
   else if (cmd == "color")  {
-    if (arg.length() && setColor(arg[0])) Serial.printf("color %c\n", arg[0]);
-    else Serial.println("color: r g b w y c m");
+    if (arg.length() && setColor(arg[0])) logMsg(LOGLVL_INFO, "color %c\n", arg[0]);
+    else logMsg(LOGLVL_WARN, "color: r g b w y c m\n");
   }
   else if (cmd == "bright") {
     bright = constrain(arg.toInt(), MIN_BRIGHT, MAX_BRIGHT);
-    Serial.printf("brightness %d (cap %d)\n", bright, MAX_BRIGHT);
+    logMsg(LOGLVL_INFO, "brightness %d (cap %d)\n", bright, MAX_BRIGHT);
   }
   else if (cmd == "time") {
     if (arg.length()) {
       time_t t1, t2;
       const char* p = parseDateTime(arg.c_str(), &t1);
       if (!p) {
-        Serial.println("usage: time [YYYY-MM-DD HH:MM[:SS]] [END]   (US Eastern local time)");
+        logMsg(LOGLVL_WARN, "usage: time [YYYY-MM-DD HH:MM[:SS]] [END]   (US Eastern local time)\n");
         return;
       }
       while (*p == ' ') p++;
       if (*p) {                                      // a second time: sweep hour by hour
         if (!parseDateTime(p, &t2) || t2 < t1) {
-          Serial.println("usage: time START END   (both YYYY-MM-DD HH:MM[:SS], END not before START)");
+          logMsg(LOGLVL_WARN, "usage: time START END   (both YYYY-MM-DD HH:MM[:SS], END not before START)\n");
           return;
         }
         sweepNext = t1;
         sweepEnd = t2;
         sweepActive = true;
-        Serial.printf("sweep: %ld hourly steps, one per second; any other command stops it\n",
+        logMsg(LOGLVL_INFO, "sweep: %ld hourly steps, one per second; any other command stops it\n",
                       (long)((t2 - t1) / 3600 + 1));
         sweepStep();
         return;
@@ -1057,7 +1062,7 @@ void handle(String line) {
     if (!suiteActive) { suiteSavedOverride = emergencyOverride; suiteSavedState = emergencyOverrideState; }
     suiteIndex = 0;
     suiteActive = true;
-    Serial.printf("test-suite: %d cases, one every %lu s; any other command stops it\n",
+    logMsg(LOGLVL_INFO, "test-suite: %d cases, one every %lu s; any other command stops it\n",
                   NUM_TESTS, (unsigned long)(SUITE_STEP_MS / 1000));
     suiteStep();
   }
@@ -1065,15 +1070,15 @@ void handle(String line) {
     float r = arg.toFloat();
     int k = riskFromHours(r);
     CRGB c = riskColor(k);
-    Serial.printf("remaining %.1f h -> risk %d, color %d,%d,%d\n", r, k, c.r, c.g, c.b);
+    logMsg(LOGLVL_INFO, "remaining %.1f h -> risk %d, color %d,%d,%d\n", r, k, c.r, c.g, c.b);
   }
   else if (cmd == "status") {
-    Serial.printf("brightness %d, color %d,%d,%d, left %d, right %d, top precip %d%%, bottom speed %d, clock mode %s, runs 2 x %d, pins %d and %d\n",
+    logMsg(LOGLVL_INFO, "brightness %d, color %d,%d,%d, left %d, right %d, top precip %d%%, bottom speed %d, clock mode %s, runs 2 x %d, pins %d and %d\n",
                   bright, current.r, current.g, current.b, leftBar.n, rightBar.n,
                   topState.breathPct, bottomMarch.speed, clockMode ? "on" : "off",
                   RUN_LEN, DATA_PIN_A, DATA_PIN_B);
   }
-  else Serial.println("commands: left N | right N | bottom S | precip P|off | high C|off | snow P IN H|off | emergency [start|stop WHEN|off] | forecast | color X | bright B | off | time [YYYY-MM-DD HH:MM] | test-suite | risk H | status");
+  else logMsg(LOGLVL_INFO, "commands: left N | right N | bottom S | precip P|off | high C|off | snow P IN H|off | emergency [start|stop WHEN|off] | forecast | color X | bright B | off | time [YYYY-MM-DD HH:MM] | test-suite | risk H | status\n");
 }
 
 String inbuf;
@@ -1091,6 +1096,7 @@ void pollSerial() {
 
 void setup() {
   Serial.begin(115200);
+  logBegin();
 
   WiFi.begin(WIFI_SSID, WIFI_PASS);                      // non-blocking; the renderer keeps running
   sntp_set_time_sync_notification_cb(onTimeSync);
@@ -1098,7 +1104,7 @@ void setup() {
   forecastMutex = xSemaphoreCreateMutex();
   emergencyMutex = xSemaphoreCreateMutex();
   restoreEmergencyState();
-  if (emergency.state.start) Serial.println("snow emergency: state restored from flash");
+  if (emergency.state.start) logMsg(LOGLVL_INFO, "snow emergency: state restored from flash\n");
   xTaskCreatePinnedToCore(weatherTask, "weather", 20480, nullptr, 1, nullptr, 0);   // core 0; the Arduino loop runs on core 1
   // Keep handy for testing without wifi
 //  setenv("TZ", TZ_EASTERN, 1);
@@ -1110,7 +1116,7 @@ void setup() {
   FastLED.setDither(DISABLE_DITHER);     // ...and so is the dithering
   lastFrameMs = millis();
   updateFromClock(true);
-  Serial.println("street-cleaning-reveaLED ready. try: time 2026-10-22 16:30");
+  logMsg(LOGLVL_INFO, "street-cleaning-reveaLED ready. try: time 2026-10-22 16:30\n");
 
 }
 
