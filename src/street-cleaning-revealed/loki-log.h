@@ -2,6 +2,11 @@
 //
 //   logMsg(LOGLVL_INFO, "weather: fetching\n");        printf-style, like Serial.printf
 //
+// logMsg is a macro that adds the calling function's name (__func__), which goes to Loki as structured
+// metadata ({"func": "..."}), so a query can filter with:  {app="street-cleaning-reveaLED"} | func="pollSnowEmergency"
+// Structured metadata needs Loki 3.x with it enabled (Grafana Cloud has it). If your stack refuses it (HTTP 400),
+// build with -DLOKI_FUNC_MODE=1 to put "func=NAME " at the start of each Loki line instead (Serial is unchanged).
+//
 // logMsg prints to Serial immediately and then queues the line for Loki. It never touches the network and
 // never waits for it, so serial interaction and the display are not held up. The queue is a small ring
 // (LOKI_QUEUE_LINES); when it fills, the oldest lines are dropped from the Loki queue (never from Serial) and
@@ -28,8 +33,9 @@ enum LogLevel { LOGLVL_DEBUG = 0, LOGLVL_INFO, LOGLVL_WARN, LOGLVL_ERROR };
 
 void logBegin();   // call first in setup(), before any logMsg
 
-// Serial, then the Loki queue.
-void logMsg(LogLevel level, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
+// Serial, then the Loki queue. `func` must be a string with static storage (a literal or __func__).
+void logMsgAt(LogLevel level, const char* func, const char* fmt, ...) __attribute__((format(printf, 3, 4)));
+#define logMsg(level, ...) logMsgAt((level), __func__, __VA_ARGS__)
 // Serial only: for diagnostics about logging itself, which must not feed back into the queue.
 void logLocal(LogLevel level, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
 

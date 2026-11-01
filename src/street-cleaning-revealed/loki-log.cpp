@@ -14,11 +14,15 @@ const int LINE_CHARS = 256;              // longer lines are cut for Loki (Seria
 const int BATCH_LINES = 10;              // lines per POST
 const uint32_t MIN_SEND_GAP_MS = 10000;  // at most one POST per this long, unless a full batch is waiting
 const uint32_t BACKOFF_MS[] = { 15000UL, 30000UL, 60000UL, 120000UL, 300000UL };
+#ifndef LOKI_FUNC_MODE
+#define LOKI_FUNC_MODE 0         // 0: structured metadata {"func": ...}; 1: "func=NAME " prefix on the line
+#endif
 const char* const LEVEL_NAMES[] = { "debug", "info", "warn", "error" };
 
 struct Entry {
   uint32_t ms;                  // millis() when logged
   uint8_t level;
+  const char* func;             // static string (__func__)
   char text[LINE_CHARS];
 };
 
@@ -46,10 +50,11 @@ bool trimInto(Entry& e, const char* s) {
   return true;
 }
 
-void enqueue(LogLevel level, const char* text) {
+void enqueue(LogLevel level, const char* func, const char* text) {
   Entry e;
   e.ms = millis();
   e.level = (uint8_t)level;
+  e.func = func ? func : "";
   if (!trimInto(e, text)) return;
   lock();
   if (tailSeq - headSeq >= (uint32_t)QUEUE_LINES) { headSeq++; dropped++; }    // full: drop the oldest
@@ -58,14 +63,14 @@ void enqueue(LogLevel level, const char* text) {
   unlock();
 }
 
-void vlog(LogLevel level, bool toLoki, const char* fmt, va_list ap) {
+void vlog(LogLevel level, const char* func, bool toLoki, const char* fmt, va_list ap) {
   char buf[384];
   int n = vsnprintf(buf, sizeof buf, fmt, ap);
   if (n < 0) return;
   if (n >= (int)sizeof buf) n = sizeof buf - 1;
   Serial.print(buf);
   if (n == 0 || buf[n - 1] != '\n') Serial.print("\n");
-  if (toLoki) enqueue(level, buf);
+  if (toLoki) enqueue(level, func, buf);
 }
 
 // A bounded writer for building the JSON body.
@@ -92,17 +97,17 @@ void logBegin() {
   if (!mutex) mutex = xSemaphoreCreateMutex();
 }
 
-void logMsg(LogLevel level, const char* fmt, ...) {
+void logMsgAt(LogLevel level, const char* func, const char* fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
-  vlog(level, true, fmt, ap);
+  vlog(level, func, true, fmt, ap);
   va_end(ap);
 }
 
 void logLocal(LogLevel level, const char* fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
-  vlog(level, false, fmt, ap);
+  vlog(level, nullptr, false, fmt, ap);
   va_end(ap);
 }
 
@@ -126,7 +131,7 @@ int lokiFlush(uint64_t nowNs) {
   if (lost) {
     char m[64];
     snprintf(m, sizeof m, "loki: %u log lines were dropped (queue full)", (unsigned)lost);
-    enqueue(LOGLVL_WARN, m);
+    enqueue(LOGLVL_WARN, "lokiFlush", m);
   }
 
   int pending = lokiPending();
@@ -166,7 +171,15 @@ int lokiFlush(uint64_t nowNs) {
       uint64_t ts = ageNs <= nowNs ? nowNs - ageNs : nowNs;
       char tsStr[24];
       snprintf(tsStr, sizeof tsStr, "%llu", (unsigned long long)ts);
-      o.puts("[\""); o.puts(tsStr); o.puts("\",\""); o.str(e.text); o.puts("\"]");
+      o.puts("[\""); o.puts(tsStr); o.puts("\",\"");
+#if LOKI_FUNC_MODE == 1
+      if (e.func[0]) { o.puts("func="); o.str(e.func); o.put(' '); }
+      o.str(e.text); o.puts("\"]");
+#else
+      o.str(e.text); o.puts("\"");
+      if (e.func[0]) { o.puts(",{\"func\":\""); o.str(e.func); o.puts("\"}"); }
+      o.put(']');
+#endif
     }
     if (opened) o.puts("]}");
   }
@@ -197,6 +210,11 @@ int lokiFlush(uint64_t nowNs) {
     http.setAuthorization(LOKI_USER, LOKI_TOKEN);
     http.addHeader("Content-Type", "application/json");
     code = http.POST((uint8_t*)body, o.len);
+    if (code >= 400 && code < 500) {                     // what Loki said about it, to diagnose a refusal
+      String why = http.getString();
+      why.replace('\n', ' ');
+      logLocal(LOGLVL_WARN, "loki: refused: %.160s\n", why.c_str());
+    }
     http.end();
   }
   free(body);

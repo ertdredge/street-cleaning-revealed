@@ -333,6 +333,11 @@ void renderFrame() {
 // ---- Weather: forecast snapshot and its poll task ------------------------------
 WeatherForecast forecast;                  // the snapshot the display reads; guarded by forecastMutex
 SemaphoreHandle_t forecastMutex;
+// Asked for by the weather task after each round of feed polling (finished, or abandoned to retry later);
+// carried out by loop() on core 1 so that it can touch the display state: the same output as the `time`,
+// `forecast` and `status` commands, at info level so that it reaches Loki.
+volatile bool reportRequested = false;
+
 volatile bool weatherUpdated = false;      // set by the poll task after a good fetch; loop() re-renders
 int precipOverride = -1;                   // serial `precip P` test override; -1 = use the forecast
 float highOverride = NAN;                  // serial `high C` test override of the forecast high; NaN = use the forecast
@@ -446,6 +451,7 @@ void weatherTask(void*) {
     uint32_t waitMs = 5000;
     time_t now = realNow();
     bool ready = WiFi.status() == WL_CONNECTED && now >= CLOCK_VALID_AFTER;   // else look again shortly
+    bool polled = false;                     // a poll was attempted this round, whatever its outcome
     if (ready && (int32_t)(millis() - forecastDue) >= 0) {
       logMsg(LOGLVL_INFO, "weather: fetching\n");
       uint32_t t0 = millis();
@@ -481,11 +487,14 @@ void weatherTask(void*) {
       }
       raw.close();
       forecastDue = millis() + waitMs;
+      polled = true;
     }
     if (ready && (int32_t)(millis() - emergencyDue) >= 0) {
       bool ok = pollSnowEmergency();
       emergencyDue = millis() + (ok ? EMERGENCY_POLL_MS : EMERGENCY_RETRY_MS);
+      polled = true;
     }
+    if (polled) reportRequested = true;       // loop() logs time / forecast / status
     if (WiFi.status() == WL_CONNECTED) {         // ship queued log lines; Serial output never waits for this
       time_t t = realNow();
       lokiFlush(t >= CLOCK_VALID_AFTER ? (uint64_t)t * 1000000000ULL : 0);
@@ -786,10 +795,14 @@ void reportSide(const char* name, time_t end, time_t now, int risk) {
                 name, when, (int64_t)(end - now) / 3600.0f, risk);
 }
 
+// Level of the verbose lines below: debug for the `time` command, info for the report after a feed poll
+// (which is meant to reach Loki). Only touched on core 1.
+LogLevel verboseLevel = LOGLVL_DEBUG;
+
 void updateFromClock(bool verbose) {
   time_t now = time(nullptr);
   if (now < CLOCK_VALID_AFTER) {
-    if (verbose) logMsg(LOGLVL_DEBUG, "clock not set yet (waiting for NTP, or use: time YYYY-MM-DD HH:MM)\n");
+    if (verbose) logMsg(verboseLevel, "clock not set yet (waiting for NTP, or use: time YYYY-MM-DD HH:MM)\n");
     return;
   }
   time_t endL = nextCleaningEnd(LEFT_SCHEDULE, now);
@@ -860,37 +873,37 @@ void updateFromClock(bool verbose) {
   if (verbose) {
     char buf[40];
     fmtTime(now, buf, sizeof buf);
-    logMsg(LOGLVL_DEBUG, "now %s\n", buf);
+    logMsg(verboseLevel, "now %s\n", buf);
     reportSide("left ", endL, now, cleanL);
     reportSide("right", endR, now, cleanR);
-    logMsg(LOGLVL_DEBUG, "bottom speed %d\n", speed);
+    logMsg(verboseLevel, "bottom speed %d\n", speed);
     if (haveWx) {
-      logMsg(LOGLVL_DEBUG, "top: %s forecast, precipitation %d%%%s, breathing %.2f Hz\n",
+      logMsg(verboseLevel, "top: %s forecast, precipitation %d%%%s, breathing %.2f Hz\n",
                     day == FORECAST_TOMORROW ? "tomorrow's" : "today's",
                     rawPrecip, precipOverride >= 0 ? " (overridden)" : "", breathRateHz(precip));
       if (haveDelta) {
         TopShape sh = topShapeFor(deltaC);
-        logMsg(LOGLVL_DEBUG, "top: high %.1f C%s vs typical %.1f C (%+.1f): %s\n", highC,
+        logMsg(verboseLevel, "top: high %.1f C%s vs typical %.1f C (%+.1f): %s\n", highC,
                       !std::isnan(highOverride) ? " (overridden)" : "", typicalC, deltaC,
                       sh.hotPixels ? "hot" : sh.coldPixels ? "cold" : "about typical");
         if (sh.hotPixels || sh.coldPixels)
-          logMsg(LOGLVL_DEBUG, "top: %d %s pixels, bleed depth %d into the center\n",
+          logMsg(verboseLevel, "top: %d %s pixels, bleed depth %d into the center\n",
                         sh.hotPixels + sh.coldPixels, sh.hotPixels ? "scarlett" : "sky blue", sh.hotBleed + sh.coldBleed);
       } else {
-        logMsg(LOGLVL_DEBUG, "top: no forecast high, default display\n");
+        logMsg(verboseLevel, "top: no forecast high, default display\n");
       }
-    } else logMsg(LOGLVL_DEBUG, "top: no forecast, dark\n");
+    } else logMsg(verboseLevel, "top: no forecast, dark\n");
     if (snow.any) {
-      logMsg(LOGLVL_DEBUG, "snow: %.1f in, %d%%, starts in %.1f h -> snow risk %d on the %s bar%s; bars show left %d, right %d; sparkle: bottom %s, left %s, right %s\n",
+      logMsg(verboseLevel, "snow: %.1f in, %d%%, starts in %.1f h -> snow risk %d on the %s bar%s; bars show left %d, right %d; sparkle: bottom %s, left %s, right %s\n",
                     snow.inches, snow.percent, (snow.start - now) / 3600.0f, snowRisk, snowOnRight ? "right" : "left",
                     snowIsEmergency ? " (city snow emergency)" : snowOverride.active ? " (overridden)" : "", riskL, riskR, bottomSparkle ? "on" : "off", leftSparkle ? "on" : "off", rightSparkle ? "on" : "off");
-    } else logMsg(LOGLVL_DEBUG, "snow: none forecast\n");
+    } else logMsg(verboseLevel, "snow: none forecast\n");
     SnowEmergencyState esv;
     if (currentEmergency(&esv)) printEmergencyState("emergency", esv, now);
-    logMsg(LOGLVL_DEBUG, "top sparkle %s\n", topSparkle ? "on" : "off");
+    logMsg(verboseLevel, "top sparkle %s\n", topSparkle ? "on" : "off");
     const char* why = nullptr;
     WasteState ws = wasteState(now, &why);
-    logMsg(LOGLVL_DEBUG, "waste: %s%s%s%s\n",
+    logMsg(verboseLevel, "waste: %s%s%s%s\n",
                   ws == WASTE_PUT_OUT ? "put out now" : ws == WASTE_PUT_OUT_YARD ? "put out now, with yard waste"
                   : ws == WASTE_SKIPPED ? "skipped (holiday)" : "idle",
                   why ? " [delayed by " : "", why ? why : "", why ? "]" : "");
@@ -939,6 +952,26 @@ void allOff() {
   setRight(0, CRGB::Black);
   setTopDark();
   setBottom(CRGB::Black, 0);
+}
+
+void printStatus() {
+  logMsg(LOGLVL_INFO, "brightness %d, color %d,%d,%d, left %d, right %d, top precip %d%%, bottom speed %d, clock mode %s, runs 2 x %d, pins %d and %d\n",
+         bright, current.r, current.g, current.b, leftBar.n, rightBar.n,
+         topState.breathPct, bottomMarch.speed, clockMode ? "on" : "off",
+         RUN_LEN, DATA_PIN_A, DATA_PIN_B);
+}
+
+void printReport() {
+  logMsg(LOGLVL_INFO, "report: state after a feed poll\n");
+  if (clockMode) {
+    verboseLevel = LOGLVL_INFO;
+    updateFromClock(true);                // what `time` prints
+    verboseLevel = LOGLVL_DEBUG;
+  } else {
+    logMsg(LOGLVL_INFO, "time: display is in manual mode (a command set the bars), no clock report\n");
+  }
+  printForecast();
+  printStatus();
 }
 
 void handle(String line) {
@@ -1072,12 +1105,7 @@ void handle(String line) {
     CRGB c = riskColor(k);
     logMsg(LOGLVL_INFO, "remaining %.1f h -> risk %d, color %d,%d,%d\n", r, k, c.r, c.g, c.b);
   }
-  else if (cmd == "status") {
-    logMsg(LOGLVL_INFO, "brightness %d, color %d,%d,%d, left %d, right %d, top precip %d%%, bottom speed %d, clock mode %s, runs 2 x %d, pins %d and %d\n",
-                  bright, current.r, current.g, current.b, leftBar.n, rightBar.n,
-                  topState.breathPct, bottomMarch.speed, clockMode ? "on" : "off",
-                  RUN_LEN, DATA_PIN_A, DATA_PIN_B);
-  }
+  else if (cmd == "status") printStatus();
   else logMsg(LOGLVL_INFO, "commands: left N | right N | bottom S | precip P|off | high C|off | snow P IN H|off | emergency [start|stop WHEN|off] | forecast | color X | bright B | off | time [YYYY-MM-DD HH:MM] | test-suite | risk H | status\n");
 }
 
@@ -1135,6 +1163,10 @@ void loop() {
     weatherUpdated = false;
     emergencyUpdated = false;
     updateFromClock(false);
+  }
+  if (reportRequested) {
+    reportRequested = false;
+    printReport();
   }
   renderFrame();
 }
