@@ -2,11 +2,13 @@
 // Serial test harness: 115200 baud, newline-terminated commands.
 //
 // Hardware:
-//   Run A: GPIO 27 -> 74AHCT125N gate 1 -> 470 ohm -> left strip (90) -> top strip (60)
-//   Run B: GPIO 33 -> 74AHCT125N gate 2 -> 470 ohm -> bottom strip (60) -> right strip (90)
+//   Run A: GPIO 27 -> 74AHCT125N gate 1 -> 470 ohm -> bottom strip (60) -> left strip (90)
+//   Run B: GPIO 33 -> 74AHCT125N gate 2 -> 470 ohm -> right strip (90) -> top strip (60)
+// Both runs start at the lower-RIGHT corner, where the cables enter.
 // One 300-element array: indexes 0..149 are run A, 150..299 are run B.
-// In chain order every strip already runs in its natural display direction:
-// left/right bottom -> top, top/bottom left -> right.
+// In chain order the left and right strips already run in their natural display direction (bottom -> top),
+// but the top and bottom strips run right -> left, against the display direction (left -> right):
+// the Strip table marks them `reversed`, and px() / pixelIndex() hide that from everything above layer 0.
 //
 // Architecture (encoding rules: docs/Ambient-Display-Encoding.md):
 //   Layer 0  geometry    Strip table; the only code that knows about the daisy chain
@@ -76,8 +78,8 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
-#define DATA_PIN_A 27       // run A: left (90) -> top (60)
-#define DATA_PIN_B 33       // run B: bottom (60) -> right (90)
+#define DATA_PIN_A 27       // run A: bottom (60, right -> left) -> left (90, bottom -> top)
+#define DATA_PIN_B 33       // run B: right (90, bottom -> top) -> top (60, right -> left)
 #define RUN_LEN 150
 #define NUM_LEDS (2 * RUN_LEN)
 #define COLOR_ORDER GRB     // verified in A1
@@ -111,11 +113,13 @@ const char* const TZ_EASTERN = "EST5EDT,M3.2.0,M11.1.0";
 const time_t CLOCK_VALID_AFTER = 1767225600;   // 2026-01-01 UTC; earlier means the clock is unset
 
 // ---- Layer 0: geometry --------------------------------------------------------
-struct Strip { uint16_t first; uint16_t len; };
-const Strip STRIP_LEFT   = {  0, 90 };   // run A, bottom -> top
-const Strip STRIP_TOP    = { 90, 60 };   // run A, left -> right
-const Strip STRIP_BOTTOM = {150, 60 };   // run B, left -> right
-const Strip STRIP_RIGHT  = {210, 90 };   // run B, bottom -> top
+// Pixel `first` is the one wired nearest the data input. `reversed`: the strip is addressed against its
+// logical direction (logical position 0 is the left end of top/bottom, the bottom end of left/right).
+struct Strip { uint16_t first; uint16_t len; bool reversed; };
+const Strip STRIP_BOTTOM = {  0, 60, true  };   // run A, wired right -> left (starts at the lower-right corner)
+const Strip STRIP_LEFT   = { 60, 90, false };   // run A, wired bottom -> top
+const Strip STRIP_RIGHT  = {150, 90, false };   // run B, wired bottom -> top (starts at the lower-right corner)
+const Strip STRIP_TOP    = {240, 60, true  };   // run B, wired right -> left (ends at the upper-left corner)
 
 // Drawing happens in `canvas` at full scale; ditherOut() applies the global brightness and the per-pixel
 // breath gain at higher precision and writes the 8-bit result into `leds`, which FastLED sends out.
@@ -138,12 +142,18 @@ struct TopState { CRGB base[TOP_PIXELS]; int breathPct; float phase; };   // bas
 
 // ---- Layer 1: primitives ------------------------------------------------------
 // Logical position 0 is the bottom (left/right strips) or the left end (top/bottom).
+// Index into the 300-pixel arrays of logical position `pos` of a strip (clamped to the strip).
+uint16_t pixelIndex(const Strip& s, int pos) {
+  int p = constrain(pos, 0, (int)s.len - 1);
+  return s.first + (s.reversed ? s.len - 1 - p : p);
+}
+
 CRGB& px(const Strip& s, int pos) {
-  return canvas[s.first + constrain(pos, 0, (int)s.len - 1)];
+  return canvas[pixelIndex(s, pos)];
 }
 
 void fillStrip(const Strip& s, CRGB c) {
-  for (int i = 0; i < s.len; i++) canvas[s.first + i] = c;
+  for (int i = 0; i < s.len; i++) px(s, i) = c;
 }
 
 // ---- BEGIN PURE (no hardware; checked on the host) -----------------------------
@@ -268,7 +278,7 @@ void drawTop(const Strip& s, const TopState& t) {
   float gain = t.breathPct > 0 ? breathGain(t.phase) : 1.0f;
   for (int i = 0; i < s.len; i++) {
     px(s, i) = t.base[i];
-    gainOf[s.first + i] = gain;          // applied at full precision in ditherOut
+    gainOf[pixelIndex(s, i)] = gain;          // applied at full precision in ditherOut
   }
 }
 
@@ -301,7 +311,7 @@ bool leftSparkle = false, rightSparkle = false;     // ...and on the bar that ca
 // Sparkle on the first `lit` pixels of the strip.
 void stepSparkle(const Strip& s, bool on, float dt, int lit) {
   for (int i = 0; i < s.len; i++) {
-    float& v = sparkleOf[s.first + i];
+    float& v = sparkleOf[pixelIndex(s, i)];
     v -= dt / SPARKLE_SECONDS;
     if (v < 0.0f || i >= lit) v = 0.0f;
   }
@@ -309,7 +319,7 @@ void stepSparkle(const Strip& s, bool on, float dt, int lit) {
   float expect = SPARKLE_PER_SEC * dt;
   int n = (int)expect;
   if (random(10000) < (long)((expect - n) * 10000.0f)) n++;
-  for (int k = 0; k < n; k++) sparkleOf[s.first + random(lit)] = 1.0f;
+  for (int k = 0; k < n; k++) sparkleOf[pixelIndex(s, random(lit))] = 1.0f;
 }
 
 void renderFrame() {

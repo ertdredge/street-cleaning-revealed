@@ -50,21 +50,21 @@ The top strip shows the weather forecast instead of repeating the bottom strip. 
 
 - **Strip pieces, all cut from the one 300-pixel reel:** left side 90 pixels (about 1.5 m), right side 90 pixels (about 1.5 m), top 60 pixels (about 1.0 m), bottom 60 pixels (about 1.0 m). 90 + 90 + 60 + 60 = 300, so there is **no spare pixel**, and cuts must land exactly on the marked cut pads. The pieces are slightly shorter than the 160 cm / 105 cm window edges.
 - **Four separate strips**, joined at the corners by waterproof pigtail connectors.
-- **Two independent 150-pixel runs, both starting at the lower-left corner:**
+- **Two independent 150-pixel runs, both starting at the lower-right corner** (changed from the lower-left on 2026-11-05; the sketch is already updated):
 
 | Run | Data | Strips in order | Logical indexes |
 |---|---|---|---|
-| A | GPIO27 → 74AHCT125 gate 1 | left (bottom to top), then top (left to right) | 0–89 left, 90–149 top |
-| B | GPIO33 → 74AHCT125 gate 2 | bottom (left to right), then right (bottom to top) | 150–209 bottom, 210–299 right |
+| A | GPIO27 → 74AHCT125 gate 1 | bottom (right to left), then left (bottom to top) | 0–59 bottom, 60–149 left |
+| B | GPIO33 → 74AHCT125 gate 2 | right (bottom to top), then top (right to left) | 150–239 right, 240–299 top |
 
-  Both side bars fill upward as the index increases. The top-right corner has no joint: run A's last pixel (right end of the top strip) and run B's last pixel (top of the right strip) are both sealed dead ends there.
-- **Electronics are stored indoors** (Feather, level shifter, 12 V supply). **Two cables** run from the electronics through one hole drilled in the window casing at the lower-left corner, one per run, to the head of run A (bottom of the left strip) and the head of run B (left end of the bottom strip). Each cable carries +12 V, GND, DATA, and BI (tied to GND at the head).
+  Both side bars fill upward as the index increases; the top and bottom strips are addressed right to left, against their display direction, which the sketch's `Strip` table handles with a `reversed` flag (logical position 0 is always the left end). The upper-left corner has no joint: run A's last pixel (top of the left strip) and run B's last pixel (left end of the top strip) are both sealed dead ends there. Which run goes on which pin is a wiring choice; if you swap them, swap `DATA_PIN_A` and `DATA_PIN_B` and the strip table's `first` values (bottom and left start at 150, right and top at 0).
+- **Electronics are stored indoors** (Feather, level shifter, 12 V supply). **Two cables** run from the electronics through one hole drilled in the window casing at the lower-right corner, one per run, to the head of run A (right end of the bottom strip) and the head of run B (bottom of the right strip). Each cable carries +12 V, GND, DATA, and BI (tied to GND at the head).
 - **Why two runs rather than one 300-pixel daisy chain:** voltage drop along a run scales roughly with the square of its length, so 150-pixel runs should show about a quarter of the drop of a single 300-pixel feed; each pigtail and joint carries at most half the current; a failed corner joint loses at most 60 or 90 pixels instead of 210; and it costs only a spare gate on the already-purchased 74AHCT125 plus one more GPIO. Rejected: a single pigtail feeding a 300-pixel chain around all four sides.
 - **Firmware shape:** one 300-element array, two controllers, so the bar-graph logic can address a logical array:
 
 ```cpp
-FastLED.addLeds<WS2812B, 27, GRB>(leds, 0, 150);       // run A: left + top
-FastLED.addLeds<WS2812B, 33, GRB>(leds, 150, 150);     // run B: bottom + right
+FastLED.addLeds<WS2812B, 27, GRB>(leds, 0, 150);       // run A: bottom + left
+FastLED.addLeds<WS2812B, 33, GRB>(leds, 150, 150);     // run B: right + top
 ```
 
 - **Fusing:** fuse each 12 V feed separately (about 2–3 A).
@@ -209,10 +209,10 @@ Goals: confirm color order, control multiple pixels, and prototype the bar-graph
 Layout and rationale in §3.1.
 
 1. ✅ **B1. Cut.** Cut the reel at the marked pads into 90 (left), 90 (right), 60 (top), 60 (bottom). Zero spare pixels, so mark and check each cut before making it.
-2. ✅ **B2. Terminate and seal.** Six four-wire terminations are needed on cut ends: pigtail A to the left strip's DI end; the left strip's DO end; the top strip's DI end; pigtail B to the bottom strip's DI end; the bottom strip's DO end; the right strip's DI end. Two dead ends need sealing: the top strip's DO end and the right strip's DO end. The reel's two factory connectors can absorb up to two of these if they mate with the purchased BTF extension cables. Solder versus snap-on connectors is still open.
+2. ✅ **B2. Terminate and seal.** Six four-wire terminations are needed on cut ends: pigtail A to the bottom strip's DI end (its right end); the bottom strip's DO end (left end); the left strip's DI end (bottom); pigtail B to the right strip's DI end (bottom); the right strip's DO end (top); the top strip's DI end (right end). Two dead ends need sealing: the left strip's DO end and the top strip's DO end (left end). (Layout as of 2026-11-05, with the cables entering at the lower-right corner.) The reel's two factory connectors can absorb up to two of these if they mate with the purchased BTF extension cables. Solder versus snap-on connectors is still open.
 3. ✅ **B3. Wire run B's data path.** Gate 2 of the 74AHCT125 and a second 470 Ω resistor, per §6.1. Run B uses GPIO33.
 4. ✅ **B4. Update the sketch.** One 300-element array, two `addLeds` calls (see §3.1).
-5. ✅ **B5. Test.** Each run individually, then together. Verify the index map (0–89 left bottom to top, 90–149 top left to right, 150–209 bottom left to right, 210–299 right bottom to top). Confirm each head's BI is on GND. Repeat the full-length voltage measurement per run at the real feed.
+5. ✅ **B5. Test.** Each run individually, then together. Verify the index map (0–59 bottom right to left, 60–149 left bottom to top, 150–239 right bottom to top, 240–299 top right to left). Confirm each head's BI is on GND. Repeat the full-length voltage measurement per run at the real feed.
 
 Considerations:
 
