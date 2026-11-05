@@ -62,6 +62,8 @@
 #include <WiFi.h>
 #include <Preferences.h>
 #include <esp_sntp.h>           // sntp_set_time_sync_notification_cb
+#include <esp_system.h>         // esp_reset_reason
+#include <esp_timer.h>          // esp_timer_get_time (64-bit uptime)
 #include "secrets.h"            // const char* WIFI_SSID, WIFI_PASS; add to .gitignore
 #include "waste.h"               // holidays and the trash-day state (pure calendar logic)
 #include "weather-forecast.h"   // NWS forecast parser and per-day values (pure; needs the ArduinoJson library)
@@ -440,13 +442,62 @@ bool pollSnowEmergency() {
   return true;
 }
 
+// ---- Heartbeat to Loki (its own stream: kind="heartbeat"), every HEARTBEAT_MS, starting at boot ----------------
+// logfmt, so Grafana can chart and alert on it:  {app="street-cleaning-reveaLED", kind="heartbeat"} | logfmt | unwrap heap_free
+const uint32_t HEARTBEAT_MS = 10UL * 60UL * 1000UL;
+volatile uint32_t wifiGotIpCount = 0;             // the first one is the connection; later ones are reconnections
+
+void onWifiEvent(WiFiEvent_t event) {             // runs on the WiFi event task: just count
+  if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) wifiGotIpCount++;
+}
+
+const char* resetReasonName(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON:   return "power_on";
+    case ESP_RST_EXT:       return "external";
+    case ESP_RST_SW:        return "software";
+    case ESP_RST_PANIC:     return "panic";
+    case ESP_RST_INT_WDT:   return "int_wdt";
+    case ESP_RST_TASK_WDT:  return "task_wdt";
+    case ESP_RST_WDT:       return "wdt";
+    case ESP_RST_DEEPSLEEP: return "deepsleep";
+    case ESP_RST_BROWNOUT:  return "brownout";
+    case ESP_RST_SDIO:      return "sdio";
+    default:                return "unknown";
+  }
+}
+
+// Called from the weather task (core 0). Reads of the display buffer and counters are racy but harmless.
+void sendHeartbeat() {
+  time_t now = realNow();
+  long forecastAgeMin = -1, emergencyAgeMin = -1;
+  xSemaphoreTake(forecastMutex, portMAX_DELAY);
+  if (forecast.hasData() && now >= CLOCK_VALID_AFTER) forecastAgeMin = (long)((now - forecast.lastGoodAt()) / 60);
+  xSemaphoreGive(forecastMutex);
+  time_t emAt = lastEmergencyAt;
+  if (emAt != 0 && now >= CLOCK_VALID_AFTER) emergencyAgeMin = (long)((now - emAt) / 60);
+  uint32_t estMa = calculate_unscaled_power_mW(leds, NUM_LEDS) / 5;     // what the pixels being shown draw, at 5 V (an estimate)
+  float tempC = temperatureRead();                                      // die temperature: uncalibrated, for trends only
+  char temp[20] = "";
+  if (std::isfinite(tempC)) snprintf(temp, sizeof temp, "temp_c=%.1f ", tempC);
+  bool up = WiFi.status() == WL_CONNECTED;
+  uint32_t gotIp = wifiGotIpCount;
+  LokiStats ls = lokiStats();
+  logHeartbeat("event=heartbeat uptime_s=%llu heap_free=%u heap_min=%u heap_block=%u wifi_up=%d rssi=%d wifi_reconnects=%u "
+               "forecast_age_min=%ld emergency_age_min=%ld est_ma=%u %sreset_reason=%s loki_pending=%d loki_dropped=%u loki_post_failures=%u\n",
+               (unsigned long long)(esp_timer_get_time() / 1000000LL), (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(),
+               (unsigned)ESP.getMaxAllocHeap(), up ? 1 : 0, up ? (int)WiFi.RSSI() : 0, (unsigned)(gotIp > 0 ? gotIp - 1 : 0),
+               forecastAgeMin, emergencyAgeMin, (unsigned)estMa, temp, resetReasonName(esp_reset_reason()),
+               ls.pending, (unsigned)ls.droppedTotal, (unsigned)ls.postFailuresTotal);
+}
+
 // Runs on core 0 so that the blocking HTTPS fetch (several seconds) never stalls the renderer
 // on core 1. Hourly after a good fetch; every 5 minutes after a failed one. A failed fetch
 // leaves the previous snapshot in place (it goes stale after 12 hours: see weather-forecast.h).
 void weatherTask(void*) {
   WeatherForecast fetched;                 // private to this task; copied into `forecast` when good
   int failures = 0;
-  uint32_t forecastDue = 0, emergencyDue = 0;    // millis() times of the next fetches
+  uint32_t forecastDue = 0, emergencyDue = 0, heartbeatDue = 0;    // millis() times of the next fetches and heartbeat
   for (;;) {
     uint32_t waitMs = 5000;
     time_t now = realNow();
@@ -495,9 +546,17 @@ void weatherTask(void*) {
       polled = true;
     }
     if (polled) reportRequested = true;       // loop() logs time / forecast / status
+    if ((int32_t)(millis() - heartbeatDue) >= 0) {
+      sendHeartbeat();
+      heartbeatDue = millis() + HEARTBEAT_MS;
+    }
     if (WiFi.status() == WL_CONNECTED) {         // ship queued log lines; Serial output never waits for this
       time_t t = realNow();
-      lokiFlush(t >= CLOCK_VALID_AFTER ? (uint64_t)t * 1000000000ULL : 0);
+      uint64_t ns = t >= CLOCK_VALID_AFTER ? (uint64_t)t * 1000000000ULL : 0;
+      for (int i = 0; i < 3; i++) {              // a burst (a poll plus its report) takes more than one POST
+        int sent = lokiFlush(ns);
+        if (sent <= 0 || lokiPending() == 0) break;
+      }
     }
     vTaskDelay(pdMS_TO_TICKS(5000));
   }
@@ -1126,6 +1185,7 @@ void setup() {
   Serial.begin(115200);
   logBegin();
 
+  WiFi.onEvent(onWifiEvent);
   WiFi.begin(WIFI_SSID, WIFI_PASS);                      // non-blocking; the renderer keeps running
   sntp_set_time_sync_notification_cb(onTimeSync);
   configTzTime(TZ_EASTERN, "pool.ntp.org", "time.nist.gov");

@@ -8,9 +8,13 @@
 // build with -DLOKI_FUNC_MODE=1 to put "func=NAME " at the start of each Loki line instead (Serial is unchanged).
 //
 // logMsg prints to Serial immediately and then queues the line for Loki. It never touches the network and
-// never waits for it, so serial interaction and the display are not held up. The queue is a small ring
-// (LOKI_QUEUE_LINES); when it fills, the oldest lines are dropped from the Loki queue (never from Serial) and
-// a warning line says how many.
+// never waits for it, so serial interaction and the display are not held up. The queue is a byte ring
+// (RING_BYTES in loki-log.cpp, about 100 typical lines); when it fills, the oldest lines are dropped from the
+// Loki queue (never from Serial) and a warning line says how many.
+//
+// logHeartbeat(fmt, ...) is the same, for the periodic health line: it goes into its own stream, labelled
+// kind="heartbeat" (everything else is kind="log"), so alerts can select it directly:
+//   absent_over_time({app="street-cleaning-reveaLED", kind="heartbeat"}[30m])
 //
 // Lines go out in batches from lokiFlush(), which does the blocking HTTPS POST and so must be called from a
 // task that may block (the weather task, on core 0). A line is only sent once the clock is valid (NTP has
@@ -36,6 +40,8 @@ void logBegin();   // call first in setup(), before any logMsg
 // Serial, then the Loki queue. `func` must be a string with static storage (a literal or __func__).
 void logMsgAt(LogLevel level, const char* func, const char* fmt, ...) __attribute__((format(printf, 3, 4)));
 #define logMsg(level, ...) logMsgAt((level), __func__, __VA_ARGS__)
+void logHeartbeatAt(const char* func, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
+#define logHeartbeat(...) logHeartbeatAt(__func__, __VA_ARGS__)
 // Serial only: for diagnostics about logging itself, which must not feed back into the queue.
 void logLocal(LogLevel level, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
 
@@ -45,4 +51,7 @@ void logLocal(LogLevel level, const char* fmt, ...) __attribute__((format(printf
 int lokiFlush(uint64_t nowNs);
 
 int lokiPending();   // lines waiting
+
+struct LokiStats { int pending; uint32_t droppedTotal, sentTotal, postFailuresTotal; };
+LokiStats lokiStats();
 #endif  // ARDUINO
