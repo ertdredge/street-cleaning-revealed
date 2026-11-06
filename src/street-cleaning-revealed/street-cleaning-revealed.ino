@@ -128,6 +128,8 @@ CRGB leds[NUM_LEDS];
 float sparkleOf[NUM_LEDS];               // snow sparkle: 1 = a white flash just started, fades to 0
 float gainOf[NUM_LEDS];                  // per-pixel multiplier 0..1 (the top strip's breath), reset every frame
 float residual[NUM_LEDS][3];             // dithering: the fraction of an output step not yet sent, per channel
+float latchV[NUM_LEDS][3];               // dithering: the target level (in output steps) each channel last moved to
+const float DITHER_STATIC_EPS = 0.003f;  // a channel whose target moved less than this (in output steps) is "not changing"
 uint8_t bright = 32;                     // global brightness 0..255, applied in ditherOut (FastLED's own is left at 255)
 
 // Types used in function signatures. The Arduino build auto-generates prototypes and
@@ -282,9 +284,12 @@ void drawTop(const Strip& s, const TopState& t) {
   }
 }
 
-// canvas x gain x brightness -> leds, in floating point, with error-feedback temporal dithering:
-// each channel's rounding error is carried to the next frame, so a level between two 8-bit output
-// steps is shown as a mix of the two. At 100 frames per second the mix reads as a smooth level.
+// canvas x gain x brightness -> leds, in floating point. A channel whose target level is changing (a breath, a
+// sparkle, an ant passing) is dithered in time: its rounding error is carried to the next frame, so a level
+// between two 8-bit output steps is shown as a mix of the two, which at 100 frames per second reads as a smooth
+// level. A channel whose target is NOT changing is simply rounded to the nearest step and held: temporal dithering
+// of a constant has a pattern repeating at (fraction x frame rate), which for a small fraction is a slow, visible
+// flicker. Cost: a static color is off by up to half a step (about 0.5/level, only noticeable at very low levels).
 void ditherOut() {
   const float scale = bright / 255.0f;
   for (int i = 0; i < NUM_LEDS; i++) {
@@ -293,7 +298,16 @@ void ditherOut() {
     for (int c = 0; c < 3; c++) {
       float sp = sparkleOf[i];
       float v = (in[c] * gainOf[i] * (1.0f - sp) + SPARKLE_LEVEL * sp) * scale;
-      if (v <= 0.0f) { residual[i][c] = 0.0f; out[c] = 0; continue; }
+      if (v <= 0.0f) { residual[i][c] = 0.0f; latchV[i][c] = 0.0f; out[c] = 0; continue; }
+      if (fabsf(v - latchV[i][c]) <= DITHER_STATIC_EPS) {          // not changing: round and hold
+        int o = (int)(latchV[i][c] + 0.5f);
+        if (o > 255) o = 255;
+        residual[i][c] = latchV[i][c] - o;                         // where a later dither starts from
+        if (residual[i][c] < 0.0f) residual[i][c] = 0.0f;
+        out[c] = (uint8_t)o;
+        continue;
+      }
+      latchV[i][c] = v;                                            // changing: dither in time
       float t = v + residual[i][c];
       int o = (int)t;                      // t >= 0
       if (o > 255) o = 255;
