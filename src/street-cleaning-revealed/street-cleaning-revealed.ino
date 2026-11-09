@@ -2,8 +2,10 @@
 // Serial test harness: 115200 baud, newline-terminated commands.
 //
 // Hardware:
-//   Run A: GPIO 27 -> 74AHCT125N gate 1 -> 470 ohm -> bottom strip (60) -> left strip (90)
-//   Run B: GPIO 33 -> 74AHCT125N gate 2 -> 470 ohm -> right strip (90) -> top strip (60)
+//   Run A: LED1 data output (GPIO 2) -> bottom strip (60) -> left strip (90)
+//   Run B: LED2 data output (GPIO 4) -> right strip (90) -> top strip (60)
+//   (QuinLED Dig-Next-2: level shifters and 33 ohm series resistors are on the board. With the Adafruit Feather V2
+//   the pins were GPIO 27 and 33 behind an external 74AHCT125N and 470 ohm resistors: see the pin constants below.)
 // Both runs start at the lower-RIGHT corner, where the cables enter.
 // One 300-element array: indexes 0..149 are run A, 150..299 are run B.
 // In chain order the left and right strips already run in their natural display direction (bottom -> top),
@@ -78,13 +80,20 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
-#define DATA_PIN_A 27       // run A: bottom (60, right -> left) -> left (90, bottom -> top)
-#define DATA_PIN_B 33       // run B: right (90, bottom -> top) -> top (60, right -> left)
+// Pins for the QuinLED Dig-Next-2 (Adafruit Feather V2 values in comments: data 27 and 33, no relay pins).
+#define DATA_PIN_A 2        // run A: bottom (60, right -> left) -> left (90, bottom -> top); Dig-Next-2 LED1 (Feather: 27)
+#define DATA_PIN_B 4        // run B: right (90, bottom -> top) -> top (60, right -> left); Dig-Next-2 LED2 (Feather: 33)
+// Each fused power output of the Dig-Next-2 is switched by an on-board MOSFET "relay": with its pin not set to the
+// ON level there is NO power at that output's terminals. Run A and run B are each fed from a 5 A output
+// (150 pixels is at most about 3.8 A at 12 V). -1 = no such pin (Feather). The 10 A output (GPIO 21) is not used.
+#define RELAY_PIN_5A_1 20   // Dig-Next-2 5A_1
+#define RELAY_PIN_5A_2 22   // Dig-Next-2 5A_2
+#define RELAY_ON_LEVEL HIGH // NOT confirmed by QuinLED's documentation: check at the first power-up (see `relay on|off`)
 #define RUN_LEN 150
 #define NUM_LEDS (2 * RUN_LEN)
 #define COLOR_ORDER GRB     // verified in A1
 #define MIN_BRIGHT 8
-#define MAX_BRIGHT 48       // bench cap: all 300 pixels white at 64 would be ~1.9 A, too close to the 2 A adapter
+#define MAX_BRIGHT 255       // bench cap: all 300 pixels white at 64 would be ~1.9 A, too close to the 2 A adapter
 
 // ---- Tunables ---------------------------------------------------------------
 const uint32_t FRAME_MS = 10;            // render period (100 fps; faster frames make the temporal dithering finer)
@@ -130,7 +139,7 @@ float gainOf[NUM_LEDS];                  // per-pixel multiplier 0..1 (the top s
 float residual[NUM_LEDS][3];             // dithering: the fraction of an output step not yet sent, per channel
 float latchV[NUM_LEDS][3];               // dithering: the target level (in output steps) each channel last moved to
 const float DITHER_STATIC_EPS = 0.003f;  // a channel whose target moved less than this (in output steps) is "not changing"
-uint8_t bright = 32;                     // global brightness 0..255, applied in ditherOut (FastLED's own is left at 255)
+uint8_t bright = 255;                     // global brightness 0..255, applied in ditherOut (FastLED's own is left at 255)
 
 // Types used in function signatures. The Arduino build auto-generates prototypes and
 // places them before the first function, so these must be defined above it.
@@ -471,8 +480,59 @@ bool pollSnowEmergency() {
 const uint32_t HEARTBEAT_MS = 10UL * 60UL * 1000UL;
 volatile uint32_t wifiGotIpCount = 0;             // the first one is the connection; later ones are reconnections
 
-void onWifiEvent(WiFiEvent_t event) {             // runs on the WiFi event task: just count
-  if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) wifiGotIpCount++;
+volatile int wifiLastDisconnectReason = 0;        // 0 = none since boot; else an esp_wifi reason code
+const char* wifiReasonName(int r) {
+  switch (r) {
+    case 1:   return "unspecified";
+    case 2:   return "auth expired";
+    case 3:   return "auth leave";
+    case 4:   return "assoc expired";
+    case 6:   return "not authenticated";
+    case 7:   return "not associated";
+    case 8:   return "assoc leave";
+    case 14:  return "MIC failure";
+    case 15:  return "4-way handshake timeout (wrong password?)";
+    case 39:  return "timeout";
+    case 200: return "beacon timeout (signal lost)";
+    case 201: return "no AP found (SSID not seen)";
+    case 202: return "auth failed (wrong password?)";
+    case 203: return "assoc failed";
+    case 204: return "handshake timeout";
+    case 205: return "connection failed";
+    default:  return "other";
+  }
+}
+
+const char* wifiStatusName(int st) {
+  switch (st) {
+    case 0:   return "idle";
+    case 1:   return "SSID not available";
+    case 2:   return "scan completed";
+    case 3:   return "connected";
+    case 4:   return "connect failed";
+    case 5:   return "connection lost";
+    case 6:   return "disconnected";
+    case 255: return "no WiFi hardware";
+    default:  return "unknown";
+  }
+}
+
+// Runs on the WiFi event task. Logs connects and disconnects (with the reason code): a repeated disconnect is
+// logged when the reason changes or every 10 s, not on every retry.
+void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
+  static uint32_t lastLogMs = 0;
+  if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+    wifiGotIpCount++;
+    logMsg(LOGLVL_INFO, "wifi: connected, ip %s, rssi %d dBm, channel %d\n", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI(), (int)WiFi.channel());
+  } else if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+    int reason = info.wifi_sta_disconnected.reason;
+    bool changed = reason != wifiLastDisconnectReason;
+    wifiLastDisconnectReason = reason;
+    if (changed || millis() - lastLogMs >= 10000) {
+      lastLogMs = millis();
+      logMsg(LOGLVL_WARN, "wifi: disconnected, reason %d (%s)\n", reason, wifiReasonName(reason));
+    }
+  }
 }
 
 const char* resetReasonName(esp_reset_reason_t r) {
@@ -508,11 +568,11 @@ void sendHeartbeat() {
   uint32_t gotIp = wifiGotIpCount;
   LokiStats ls = lokiStats();
   logHeartbeat("event=heartbeat uptime_s=%llu heap_free=%u heap_min=%u heap_block=%u wifi_up=%d rssi=%d wifi_reconnects=%u "
-               "forecast_age_min=%ld emergency_age_min=%ld est_ma=%u %sreset_reason=%s loki_pending=%d loki_dropped=%u loki_post_failures=%u\n",
+               "forecast_age_min=%ld emergency_age_min=%ld est_ma=%u %sreset_reason=%s wifi_last_disc=%d loki_pending=%d loki_dropped=%u loki_post_failures=%u\n",
                (unsigned long long)(esp_timer_get_time() / 1000000LL), (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(),
                (unsigned)ESP.getMaxAllocHeap(), up ? 1 : 0, up ? (int)WiFi.RSSI() : 0, (unsigned)(gotIp > 0 ? gotIp - 1 : 0),
                forecastAgeMin, emergencyAgeMin, (unsigned)estMa, temp, resetReasonName(esp_reset_reason()),
-               ls.pending, (unsigned)ls.droppedTotal, (unsigned)ls.postFailuresTotal);
+               (int)wifiLastDisconnectReason, ls.pending, (unsigned)ls.droppedTotal, (unsigned)ls.postFailuresTotal);
 }
 
 // Runs on core 0 so that the blocking HTTPS fetch (several seconds) never stalls the renderer
@@ -1037,6 +1097,20 @@ void allOff() {
   setBottom(CRGB::Black, 0);
 }
 
+bool powerIsOn = false;
+
+// Switches the strips' power outputs (Dig-Next-2 MOSFET relays) on or off.
+void setStripPower(bool on) {
+  const int pins[2] = { RELAY_PIN_5A_1, RELAY_PIN_5A_2 };
+  const int level = on ? RELAY_ON_LEVEL : (RELAY_ON_LEVEL == HIGH ? LOW : HIGH);
+  for (int k = 0; k < 2; k++) {
+    if (pins[k] < 0) continue;
+    digitalWrite(pins[k], level);
+    pinMode(pins[k], OUTPUT);
+  }
+  powerIsOn = on;
+}
+
 void printStatus() {
   logMsg(LOGLVL_INFO, "brightness %d, color %d,%d,%d, left %d, right %d, top precip %d%%, bottom speed %d, clock mode %s, runs 2 x %d, pins %d and %d\n",
          bright, current.r, current.g, current.b, leftBar.n, rightBar.n,
@@ -1144,6 +1218,30 @@ void handle(String line) {
     if (arg.length() && setColor(arg[0])) logMsg(LOGLVL_INFO, "color %c\n", arg[0]);
     else logMsg(LOGLVL_WARN, "color: r g b w y c m\n");
   }
+  else if (cmd == "wifi") {
+    int st = WiFi.status();
+    logMsg(LOGLVL_INFO, "wifi: %s (status %d), ssid '%s', rssi %d dBm, channel %d, ip %s, last disconnect reason %d (%s), reconnections %u\n",
+           wifiStatusName(st), st, WIFI_SSID, st == WL_CONNECTED ? (int)WiFi.RSSI() : 0, st == WL_CONNECTED ? (int)WiFi.channel() : 0,
+           WiFi.localIP().toString().c_str(), (int)wifiLastDisconnectReason, wifiReasonName(wifiLastDisconnectReason),
+           (unsigned)(wifiGotIpCount > 0 ? wifiGotIpCount - 1 : 0));
+    if (arg == "scan") {                                 // blocks for a few seconds: the display freezes meanwhile
+      logMsg(LOGLVL_INFO, "wifi: scanning...\n");
+      int n = WiFi.scanNetworks();
+      bool seen = false;
+      for (int i = 0; i < n; i++) if (WiFi.SSID(i) == WIFI_SSID) seen = true;
+      logMsg(LOGLVL_INFO, "wifi: %d networks found; '%s' %s\n", n, WIFI_SSID, seen ? "is visible" : "is NOT visible");
+      for (int i = 0; i < n && i < 8; i++)
+        logMsg(LOGLVL_INFO, "  %-24s %4d dBm  channel %2d%s\n", WiFi.SSID(i).c_str(), (int)WiFi.RSSI(i), (int)WiFi.channel(i),
+               WiFi.SSID(i) == WIFI_SSID ? "  <-- ours" : "");
+      WiFi.scanDelete();
+    }
+  }
+  else if (cmd == "relay") {
+    if (arg == "on") setStripPower(true);
+    else if (arg == "off") setStripPower(false);
+    logMsg(LOGLVL_INFO, "strip power %s (relay pins %d and %d, ON level %s)\n", powerIsOn ? "on" : "off",
+           RELAY_PIN_5A_1, RELAY_PIN_5A_2, RELAY_ON_LEVEL == HIGH ? "HIGH" : "LOW");
+  }
   else if (cmd == "bright") {
     bright = constrain(arg.toInt(), MIN_BRIGHT, MAX_BRIGHT);
     logMsg(LOGLVL_INFO, "brightness %d (cap %d)\n", bright, MAX_BRIGHT);
@@ -1189,7 +1287,7 @@ void handle(String line) {
     logMsg(LOGLVL_INFO, "remaining %.1f h -> risk %d, color %d,%d,%d\n", r, k, c.r, c.g, c.b);
   }
   else if (cmd == "status") printStatus();
-  else logMsg(LOGLVL_INFO, "commands: left N | right N | bottom S | precip P|off | high C|off | snow P IN H|off | emergency [start|stop WHEN|off] | forecast | color X | bright B | off | time [YYYY-MM-DD HH:MM] | test-suite | risk H | status\n");
+  else logMsg(LOGLVL_INFO, "commands: left N | right N | bottom S | precip P|off | high C|off | snow P IN H|off | emergency [start|stop WHEN|off] | forecast | wifi [scan] | relay [on|off] | color X | bright B | off | time [YYYY-MM-DD HH:MM] | test-suite | risk H | status\n");
 }
 
 String inbuf;
@@ -1207,8 +1305,13 @@ void pollSerial() {
 
 void setup() {
   Serial.begin(115200);
+  setStripPower(false);                  // outputs defined as off as early as possible
   logBegin();
+  logMsg(LOGLVL_INFO, "boot: reset reason %s, free heap %u\n", resetReasonName(esp_reset_reason()), (unsigned)ESP.getFreeHeap());
 
+  WiFi.persistent(false);                // do not rewrite the stored credentials on every boot
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
   WiFi.onEvent(onWifiEvent);
   WiFi.begin(WIFI_SSID, WIFI_PASS);                      // non-blocking; the renderer keeps running
   sntp_set_time_sync_notification_cb(onTimeSync);
@@ -1228,6 +1331,8 @@ void setup() {
   FastLED.setDither(DISABLE_DITHER);     // ...and so is the dithering
   lastFrameMs = millis();
   updateFromClock(true);
+  renderFrame();                         // the first frame goes out while the strips are still unpowered...
+  setStripPower(true);                   // ...then power them; loop() sends the next frame within milliseconds
   logMsg(LOGLVL_INFO, "street-cleaning-reveaLED ready. try: time 2026-10-22 16:30\n");
 
 }

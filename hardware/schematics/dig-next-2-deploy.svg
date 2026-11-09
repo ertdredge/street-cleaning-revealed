@@ -1,0 +1,157 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 960 985" role="img" font-family="Helvetica, Arial, sans-serif">
+<title>Deployment wiring: QuinLED Dig-Next-2 and Mean Well GST90A12-P1M driving two 150-pixel WS2815 runs</title>
+<desc>A 12 V Mean Well supply feeds the Dig-Next-2 main input. The 5A_1 and 5A_2 fused outputs power run A (bottom strip then left strip) and run B (right strip then top strip); LED1 (GPIO 2) and LED2 (GPIO 4) carry the data. Relay pins GPIO 20 and 22 must be on for the outputs to have power. Both runs start at the lower-right corner of the window frame.</desc>
+<rect width="960" height="985" fill="#ffffff"/>
+<text x="30" y="34" font-size="20" text-anchor="start" font-weight="600" fill="#1f1f1d">Dig-Next-2 deployment wiring</text>
+<text x="930" y="34" font-size="13" text-anchor="end" font-weight="400" fill="#6f6f6a">2026-11-07</text>
+<rect x="30" y="70" width="190" height="60" rx="6" fill="#ecebfb" stroke="#6a5fc1" stroke-width="1.5"/>
+<text x="125" y="95" font-size="15" text-anchor="middle" font-weight="600" fill="#4a3fb8">Computer</text>
+<text x="125" y="115" font-size="13" text-anchor="middle" font-weight="400" fill="#4a3fb8">USB-C: flash + serial</text>
+<line x1="220" y1="100" x2="330" y2="100" stroke="#b9791f" stroke-width="2" stroke-linecap="round"/>
+<text x="275" y="92" font-size="12" text-anchor="middle" font-weight="400" fill="#1f1f1d">USB-C 5 V</text>
+<text x="130" y="146" font-size="13" text-anchor="middle" font-weight="400" fill="#1f1f1d">AC outlet (GFCI), 3-wire cord</text>
+<text x="130" y="162" font-size="13" text-anchor="middle" font-weight="400" fill="#1f1f1d">with earth, to the IEC C14 inlet</text>
+<line x1="130" y1="168" x2="130" y2="176" stroke="#8a8a84" stroke-width="2" stroke-linecap="round"/>
+<polygon points="125,172 135,172 130,181" fill="#8a8a84"/>
+<rect x="30" y="181" width="200" height="160" rx="6" fill="#f1efe9" stroke="#8a8a84" stroke-width="1.5"/>
+<text x="130" y="203" font-size="15" text-anchor="middle" font-weight="600" fill="#1f1f1d">Mean Well GST90A12-P1M</text>
+<text x="130" y="222" font-size="13" text-anchor="middle" font-weight="400" fill="#1f1f1d">12 V, 6.67 A, 80 W</text>
+<text x="130" y="240" font-size="13" text-anchor="middle" font-weight="400" fill="#1f1f1d">Class I, indoors only</text>
+<text x="222" y="269" font-size="13" text-anchor="end" font-weight="400" fill="#1f1f1d">+12 V (center)</text>
+<text x="222" y="309" font-size="13" text-anchor="end" font-weight="400" fill="#1f1f1d">− (outer strands)</text>
+<line x1="230" y1="265" x2="330" y2="265" stroke="#d9504f" stroke-width="2" stroke-linecap="round"/>
+<line x1="230" y1="305" x2="330" y2="305" stroke="#8a8a84" stroke-width="2" stroke-linecap="round"/>
+<text x="280" y="236" font-size="11" text-anchor="middle" font-weight="400" fill="#6f6f6a">optional</text>
+<text x="280" y="248" font-size="11" text-anchor="middle" font-weight="400" fill="#6f6f6a">7.5–10 A fuse</text>
+<rect x="262" y="259" width="36" height="12" rx="0" fill="#ffffff" stroke="#6f6f6a" stroke-width="2" stroke-dasharray="4 3"/>
+<text x="280" y="285" font-size="12" text-anchor="middle" font-weight="400" fill="#1f1f1d">14 AWG</text>
+<rect x="330" y="60" width="290" height="410" rx="6" fill="#ecebfb" stroke="#6a5fc1" stroke-width="1.5"/>
+<text x="342" y="84" font-size="17" text-anchor="start" font-weight="600" fill="#4a3fb8">QuinLED Dig-Next-2</text>
+<text x="342" y="104" font-size="13" text-anchor="start" font-weight="400" fill="#4a3fb8">USB-C</text>
+<text x="342" y="152" font-size="12" text-anchor="start" font-weight="400" fill="#4a3fb8">Input 5–48 V; outputs carry</text>
+<text x="342" y="168" font-size="12" text-anchor="start" font-weight="400" fill="#4a3fb8">the input voltage (12 V)</text>
+<text x="342" y="269" font-size="13" text-anchor="start" font-weight="600" fill="#4a3fb8">+ IN</text>
+<text x="342" y="309" font-size="13" text-anchor="start" font-weight="600" fill="#4a3fb8">− IN</text>
+<text x="342" y="335" font-size="12" text-anchor="start" font-weight="400" fill="#4a3fb8">orange 6.35 mm, up to 12 AWG</text>
+<text x="612" y="134" font-size="13" text-anchor="end" font-weight="400" fill="#4a3fb8">LED1 data · GPIO 2</text>
+<text x="612" y="159" font-size="13" text-anchor="end" font-weight="400" fill="#4a3fb8">5A_1 + · fuse 5 A</text>
+<text x="612" y="184" font-size="13" text-anchor="end" font-weight="400" fill="#4a3fb8">5A_1 GND</text>
+<text x="612" y="234" font-size="13" text-anchor="end" font-weight="400" fill="#8a8a84">10A_1 + · unused</text>
+<text x="612" y="259" font-size="13" text-anchor="end" font-weight="400" fill="#8a8a84">10A_1 GND</text>
+<text x="612" y="354" font-size="13" text-anchor="end" font-weight="400" fill="#4a3fb8">LED2 data · GPIO 4</text>
+<text x="612" y="379" font-size="13" text-anchor="end" font-weight="400" fill="#4a3fb8">5A_2 + · fuse 5 A</text>
+<text x="612" y="404" font-size="13" text-anchor="end" font-weight="400" fill="#4a3fb8">5A_2 GND</text>
+<text x="342" y="432" font-size="12" text-anchor="start" font-weight="400" fill="#4a3fb8">MOSFET relay on each + output:</text>
+<text x="342" y="448" font-size="12" text-anchor="start" font-weight="400" fill="#4a3fb8">5A_1 GPIO 20 · 10A_1 GPIO 21 · 5A_2 GPIO 22</text>
+<text x="342" y="462" font-size="12" text-anchor="start" font-weight="600" fill="#4a3fb8">off until the sketch sets it (HIGH assumed)</text>
+<rect x="730" y="60" width="200" height="170" rx="6" fill="#f1efe9" stroke="#8a8a84" stroke-width="1.5"/>
+<text x="830" y="82" font-size="15" text-anchor="middle" font-weight="600" fill="#1f1f1d">Run A · 150 px</text>
+<text x="830" y="99" font-size="12" text-anchor="middle" font-weight="400" fill="#1f1f1d">bottom 60 (R→L), left 90 (B→T)</text>
+<text x="742" y="134" font-size="14" text-anchor="start" font-weight="400" fill="#1f1f1d">DI</text>
+<circle cx="800" cy="130" r="5.5" fill="#1c9c77" stroke="#6f6f6a" stroke-width="0.8"/>
+<text x="812" y="134" font-size="13" text-anchor="start" font-weight="400" fill="#6f6f6a">green wire</text>
+<text x="742" y="159" font-size="14" text-anchor="start" font-weight="400" fill="#1f1f1d">+12 V</text>
+<circle cx="800" cy="155" r="5.5" fill="#d9504f" stroke="#6f6f6a" stroke-width="0.8"/>
+<text x="812" y="159" font-size="13" text-anchor="start" font-weight="400" fill="#6f6f6a">red wire</text>
+<text x="742" y="184" font-size="14" text-anchor="start" font-weight="400" fill="#1f1f1d">GND</text>
+<circle cx="800" cy="180" r="5.5" fill="#e0b400" stroke="#6f6f6a" stroke-width="0.8"/>
+<text x="812" y="184" font-size="13" text-anchor="start" font-weight="400" fill="#6f6f6a">yellow wire</text>
+<text x="742" y="209" font-size="14" text-anchor="start" font-weight="400" fill="#1f1f1d">BI</text>
+<circle cx="800" cy="205" r="5.5" fill="#2f6fd0" stroke="#6f6f6a" stroke-width="0.8"/>
+<text x="812" y="209" font-size="13" text-anchor="start" font-weight="400" fill="#6f6f6a">blue wire</text>
+<line x1="620" y1="130" x2="730" y2="130" stroke="#1c9c77" stroke-width="2" stroke-linecap="round"/>
+<line x1="620" y1="155" x2="730" y2="155" stroke="#d9504f" stroke-width="2" stroke-linecap="round"/>
+<line x1="620" y1="180" x2="730" y2="180" stroke="#8a8a84" stroke-width="2" stroke-linecap="round"/>
+<text x="675" y="122" font-size="12" text-anchor="middle" font-weight="400" fill="#1f1f1d">data</text>
+<text x="675" y="147" font-size="12" text-anchor="middle" font-weight="400" fill="#1f1f1d">+12 V</text>
+<text x="675" y="172" font-size="12" text-anchor="middle" font-weight="400" fill="#1f1f1d">GND</text>
+<path d="M730,205 L712,205 L712,180" fill="none" stroke="#8a8a84" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="712" cy="180" r="3.2" fill="#8a8a84"/>
+<rect x="730" y="290" width="200" height="170" rx="6" fill="#f1efe9" stroke="#8a8a84" stroke-width="1.5"/>
+<text x="830" y="312" font-size="15" text-anchor="middle" font-weight="600" fill="#1f1f1d">Run B · 150 px</text>
+<text x="830" y="329" font-size="12" text-anchor="middle" font-weight="400" fill="#1f1f1d">right 90 (B→T), top 60 (R→L)</text>
+<text x="742" y="354" font-size="14" text-anchor="start" font-weight="400" fill="#1f1f1d">DI</text>
+<circle cx="800" cy="350" r="5.5" fill="#1c9c77" stroke="#6f6f6a" stroke-width="0.8"/>
+<text x="812" y="354" font-size="13" text-anchor="start" font-weight="400" fill="#6f6f6a">green wire</text>
+<text x="742" y="379" font-size="14" text-anchor="start" font-weight="400" fill="#1f1f1d">+12 V</text>
+<circle cx="800" cy="375" r="5.5" fill="#d9504f" stroke="#6f6f6a" stroke-width="0.8"/>
+<text x="812" y="379" font-size="13" text-anchor="start" font-weight="400" fill="#6f6f6a">red wire</text>
+<text x="742" y="404" font-size="14" text-anchor="start" font-weight="400" fill="#1f1f1d">GND</text>
+<circle cx="800" cy="400" r="5.5" fill="#e0b400" stroke="#6f6f6a" stroke-width="0.8"/>
+<text x="812" y="404" font-size="13" text-anchor="start" font-weight="400" fill="#6f6f6a">yellow wire</text>
+<text x="742" y="429" font-size="14" text-anchor="start" font-weight="400" fill="#1f1f1d">BI</text>
+<circle cx="800" cy="425" r="5.5" fill="#2f6fd0" stroke="#6f6f6a" stroke-width="0.8"/>
+<text x="812" y="429" font-size="13" text-anchor="start" font-weight="400" fill="#6f6f6a">blue wire</text>
+<line x1="620" y1="350" x2="730" y2="350" stroke="#1c9c77" stroke-width="2" stroke-linecap="round"/>
+<line x1="620" y1="375" x2="730" y2="375" stroke="#d9504f" stroke-width="2" stroke-linecap="round"/>
+<line x1="620" y1="400" x2="730" y2="400" stroke="#8a8a84" stroke-width="2" stroke-linecap="round"/>
+<text x="675" y="342" font-size="12" text-anchor="middle" font-weight="400" fill="#1f1f1d">data</text>
+<text x="675" y="367" font-size="12" text-anchor="middle" font-weight="400" fill="#1f1f1d">+12 V</text>
+<text x="675" y="392" font-size="12" text-anchor="middle" font-weight="400" fill="#1f1f1d">GND</text>
+<path d="M730,425 L712,425 L712,400" fill="none" stroke="#8a8a84" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="712" cy="400" r="3.2" fill="#8a8a84"/>
+<text x="830" y="246" font-size="11" text-anchor="middle" font-weight="400" fill="#6f6f6a">BI (backup data) tied to GND at the head</text>
+<text x="830" y="262" font-size="11" text-anchor="middle" font-weight="400" fill="#6f6f6a">pigtail colors as observed on the bench</text>
+<text x="830" y="486" font-size="11" text-anchor="middle" font-weight="400" fill="#6f6f6a">far ends: sealed (see layout)</text>
+<text x="342" y="497" font-size="12" text-anchor="start" font-weight="400" fill="#6f6f6a">All grounds are one net.</text>
+<line x1="30" y1="508" x2="930" y2="508" stroke="#d6d6d0" stroke-width="1" stroke-linecap="round"/>
+<text x="30" y="536" font-size="17" text-anchor="start" font-weight="600" fill="#1f1f1d">Strip layout (as seen from the street)</text>
+<rect x="250" y="590" width="220" height="320" fill="#eef3f8" stroke="none"/>
+<text x="360" y="744" font-size="14" text-anchor="middle" font-weight="400" fill="#6f6f6a">window</text>
+<text x="360" y="762" font-size="13" text-anchor="middle" font-weight="400" fill="#6f6f6a">105 × 160 cm</text>
+<line x1="250" y1="910" x2="470" y2="910" stroke="#4a3fb8" stroke-width="10" stroke-linecap="round"/>
+<line x1="250" y1="910" x2="250" y2="590" stroke="#4a3fb8" stroke-width="10" stroke-linecap="round"/>
+<line x1="470" y1="910" x2="470" y2="590" stroke="#b9791f" stroke-width="10" stroke-linecap="round"/>
+<line x1="250" y1="590" x2="470" y2="590" stroke="#b9791f" stroke-width="10" stroke-linecap="round"/>
+<polygon points="350,892 366,885 366,899" fill="#4a3fb8"/>
+<polygon points="268,690 261,706 275,706" fill="#4a3fb8"/>
+<polygon points="452,690 445,706 459,706" fill="#b9791f"/>
+<polygon points="350,608 366,601 366,615" fill="#b9791f"/>
+<text x="290" y="630" font-size="11" text-anchor="middle" font-weight="400" fill="#6f6f6a">cold</text>
+<text x="360" y="630" font-size="11" text-anchor="middle" font-weight="400" fill="#6f6f6a">typical</text>
+<text x="430" y="630" font-size="11" text-anchor="middle" font-weight="400" fill="#6f6f6a">hot</text>
+<text x="360" y="576" font-size="12" text-anchor="middle" font-weight="400" fill="#b9791f">top · 60 px · idx 240–299 · right → left</text>
+<text x="360" y="932" font-size="12" text-anchor="middle" font-weight="400" fill="#4a3fb8">bottom · 60 px · idx 0–59 · right → left</text>
+<text x="236" y="730" font-size="12" text-anchor="end" font-weight="600" fill="#4a3fb8">left</text>
+<text x="236" y="746" font-size="12" text-anchor="end" font-weight="400" fill="#4a3fb8">90 px</text>
+<text x="236" y="762" font-size="12" text-anchor="end" font-weight="400" fill="#4a3fb8">idx 60–149</text>
+<text x="236" y="778" font-size="12" text-anchor="end" font-weight="400" fill="#4a3fb8">bottom → top</text>
+<text x="484" y="730" font-size="12" text-anchor="start" font-weight="600" fill="#b9791f">right</text>
+<text x="484" y="746" font-size="12" text-anchor="start" font-weight="400" fill="#b9791f">90 px</text>
+<text x="484" y="762" font-size="12" text-anchor="start" font-weight="400" fill="#b9791f">idx 150–239</text>
+<text x="484" y="778" font-size="12" text-anchor="start" font-weight="400" fill="#b9791f">bottom → top</text>
+<circle cx="470" cy="910" r="9" fill="none" stroke="#d9504f" stroke-width="2.5"/>
+<text x="360" y="954" font-size="12" text-anchor="middle" font-weight="600" fill="#d9504f">both cables enter at the lower-right corner (hole in the window casing)</text>
+<circle cx="250" cy="910" r="6" fill="#ffffff" stroke="#6f6f6a" stroke-width="2"/>
+<circle cx="470" cy="590" r="6" fill="#ffffff" stroke="#6f6f6a" stroke-width="2"/>
+<line x1="242" y1="582" x2="258" y2="598" stroke="#d9504f" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="242" y1="598" x2="258" y2="582" stroke="#d9504f" stroke-width="2.5" stroke-linecap="round"/>
+<text x="232" y="582" font-size="12" text-anchor="end" font-weight="400" fill="#d9504f">✕ sealed dead ends</text>
+<text x="232" y="598" font-size="12" text-anchor="end" font-weight="400" fill="#d9504f">(left DO + top DO)</text>
+<text x="484" y="582" font-size="12" text-anchor="start" font-weight="400" fill="#6f6f6a">join (right DO → top DI)</text>
+<text x="232" y="928" font-size="12" text-anchor="end" font-weight="400" fill="#6f6f6a">join (bottom DO → left DI)</text>
+<rect x="30" y="650" width="12" height="12" rx="2" fill="#4a3fb8" stroke="#4a3fb8" stroke-width="1"/>
+<text x="48" y="661" font-size="12" text-anchor="start" font-weight="400" fill="#1f1f1d">Run A: GPIO 2 / LED1, 5A_1</text>
+<rect x="30" y="670" width="12" height="12" rx="2" fill="#b9791f" stroke="#b9791f" stroke-width="1"/>
+<text x="48" y="681" font-size="12" text-anchor="start" font-weight="400" fill="#1f1f1d">Run B: GPIO 4 / LED2, 5A_2</text>
+<rect x="620" y="556" width="320" height="372" rx="6" fill="#f1efe9" stroke="#8a8a84" stroke-width="1.5"/>
+<text x="634" y="580" font-size="15" text-anchor="start" font-weight="600" fill="#1f1f1d">Before the first power-up</text>
+<text x="634" y="604.0" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">• Supply cable: center conductor = +12 V,</text>
+<text x="634" y="622.5" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">  outer strands = − (verify with a meter).</text>
+<text x="634" y="641.0" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">• Ferrules on both leads (twisted + folded is</text>
+<text x="634" y="659.5" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">  bench-only: recheck for warmth).</text>
+<text x="634" y="678.0" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">• All grounds are one net; BI tied to GND at</text>
+<text x="634" y="696.5" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">  each run's head.</text>
+<text x="634" y="715.0" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">• 5 A fuse per run: 150 px is about 3.8 A at</text>
+<text x="634" y="733.5" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">  full white and brightness 255 (25 mA/px).</text>
+<text x="634" y="752.0" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">• MAX_BRIGHT 128 keeps the worst case near</text>
+<text x="634" y="770.5" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">  3.8 A in total (supply is 6.67 A).</text>
+<text x="634" y="789.0" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">• Strips get NO power until the sketch sets</text>
+<text x="634" y="807.5" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">  GPIO 20 and 22 (HIGH assumed): check with a</text>
+<text x="634" y="826.0" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">  meter and `relay on|off` before connecting.</text>
+<text x="634" y="844.5" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">• GPIO 2 (LED1) is a boot-strapping pin: if</text>
+<text x="634" y="863.0" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">  flashing fails, disconnect the LED1 data.</text>
+<text x="634" y="881.5" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">• Supply indoors, earthed cord, GFCI outlet.</text>
+<text x="634" y="900.0" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">• All GPIO are 3.3 V only. USB-C 5 V never</text>
+<text x="634" y="918.5" font-size="12.5" text-anchor="start" font-weight="400" fill="#1f1f1d">  powers the LEDs.</text>
+</svg>

@@ -71,6 +71,24 @@ FastLED.addLeds<WS2812B, 33, GRB>(leds, 150, 150);     // run B: right + top
 
 ---
 
+### 3.2 Final deployment hardware (decided 2026-11-07): QuinLED Dig-Next-2 and Mean Well GST90A12-P1M
+
+This replaces the Feather V2, the 74AHCT125N level shifter, the 470 Ω resistors and the 12 V bench adapter of the bench build (sections 4 to 6 describe the bench). Facts from QuinLED's pages ([pinout guide](https://quinled.info/dig-next-2-pinout-guide/), [power handling](https://quinled.info/dig-next-2-power-handling/), [specifications](https://quinled.info/dig-next-2-specifications/), [relays](https://quinled.info/dig-next-2-internal-external-relays/)) and the Mean Well GST90A datasheet:
+
+| Item | Value |
+|---|---|
+| Data, run A | LED1 = GPIO 2 (level-shifted on the board, 33 Ω series resistor on the board) |
+| Data, run B | LED2 = GPIO 4 |
+| Power outputs | 5A_1, 10A_1, 5A_2: each fused, each switched on the + side by an on-board MOSFET "relay". Run A and run B use 5A_1 and 5A_2; 10A_1 is unused |
+| Relay pins | 5A_1 = GPIO 20, 10A_1 = GPIO 21, 5A_2 = GPIO 22 (the polarity and boot state are not documented; the sketch assumes HIGH = on: verify) |
+| Other pins | external AC relay trigger GPIO 5 (5 V), buttons GPIO 34/35 (input only), I2C SDA 15 / SCL 14, QEXT GPIO 0, 25, 32, 33, microphone GPIO 7/8. All GPIO are 3.3 V only |
+| Input | 5 to 48 V on the orange 6.35 mm terminal (the board passes the input voltage straight to the outputs); USB-C 5 V powers only the controller, never the LEDs |
+| Supply | Mean Well GST90A12-P1M: 12 V, 6.67 A, 80 W; output plug 2.5 × 5.5 mm (not 2.1), centre positive, 1 m of 14 AWG cable; IEC C14 inlet, Class I (earthed); hiccup-mode overload protection; inrush up to 70 A at 230 V |
+
+The wiring schematic is `hardware/schematics/dig-next-2-deploy.svg` (the bench schematic `street-cleaning-revealed.svg` is kept for reference).
+
+Sketch constants: `DATA_PIN_A`, `DATA_PIN_B`, `RELAY_PIN_5A_1`, `RELAY_PIN_5A_2`, `RELAY_ON_LEVEL`. Switch back to the Feather by restoring 27 and 33 and setting both relay pins to -1. The `relay [on|off]` serial command shows or changes the strip power. The 5 V rail current limit that matters is the 5 A fuse per run (150 pixels is about 3.8 A at full white and brightness 255).
+
 ## 4. System architecture
 
 ### 4.1 Block diagram (bench configuration, two runs)

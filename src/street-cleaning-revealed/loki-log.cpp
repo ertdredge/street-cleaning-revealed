@@ -15,7 +15,7 @@
 namespace {
 
 const uint32_t RING_BYTES = 12288;       // queue storage (static); a record is a 12-byte header plus the text
-const int LINE_CHARS = 256;              // longer lines are cut for Loki (Serial gets the whole line, to 383 chars)
+const int LINE_CHARS = 320;              // longer lines are cut for Loki (Serial gets the whole line, to 383 chars)
 const int BATCH_MAX_LINES = 40;          // lines per POST, at most (the body size limit usually comes first)
 const int SEND_NOW_LINES = 20;           // this many waiting: send without waiting for the minimum gap
 const uint32_t MIN_SEND_GAP_MS = 10000;  // otherwise at most one POST per this long
