@@ -83,6 +83,23 @@ mt['uom'] = 'wmoUnit:degF'
 mt['values'].each { |e| e['value'] = e['value'] * 9.0 / 5.0 + 32.0 }
 write('highs-fahrenheit.json', d)
 
+# no minTemperature series at all: everything else must still parse, with no lows
+d = raw
+d['properties'].delete('minTemperature')
+write('no-lows.json', d)
+
+# an unrecognised unit for the lows: the same, no lows
+d = raw
+d['properties']['minTemperature']['uom'] = 'wmoUnit:K'
+write('lows-bad-unit.json', d)
+
+# the lows in deg F
+d = raw
+mn = d['properties']['minTemperature']
+mn['uom'] = 'wmoUnit:degF'
+mn['values'].each { |e| e['value'] = e['value'] * 9.0 / 5.0 + 32.0 }
+write('lows-fahrenheit.json', d)
+
 # an unrecognised snow unit
 d = raw
 d['properties']['snowfallAmount']['uom'] = 'wmoUnit:furlong'

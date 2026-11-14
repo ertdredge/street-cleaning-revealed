@@ -64,6 +64,12 @@ static void printDay(const char* name, const WeatherForecast& wf, ForecastDay da
   }
 }
 
+static void printNight(const char* name, const WeatherForecast& wf, int night, time_t now) {
+  LowOutlook l = wf.nightLow(night, now);
+  printf("%-9s ", name);
+  if (l.valid) printf("low %.1f C\n", l.lowC); else printf("low ?\n");
+}
+
 int main(int argc, char** argv) {
   const char* file = nullptr;
   const char* url = nullptr;
@@ -113,5 +119,12 @@ int main(int argc, char** argv) {
   printDay("tomorrow", wf, FORECAST_TOMORROW, now);
   printDay("day 2", wf, FORECAST_DAY_2, now);
   printDay("day 3", wf, FORECAST_DAY_3, now);
+  printf("nights (named by the evening they begin):\n");
+  printNight("last", wf, NIGHT_LAST, now);
+  printNight("tonight", wf, NIGHT_TONIGHT, now);
+  printNight("tomorrow", wf, NIGHT_TOMORROW, now);
+  printNight("day 2", wf, NIGHT_DAY_2, now);
+  printNight("day 3", wf, NIGHT_DAY_3, now);
+  printNight("day 4", wf, 4, now);
   return 0;
 }

@@ -18,8 +18,14 @@ The display additionally needs these forecast values for Somerville, MA, for **t
 
 | Value | Used for |
 |---|---|
-| Forecast high temperature | Display; encoding not defined in this document |
-| Probability of precipitation (any kind) | Display; encoding not defined in this document |
+| Forecast high temperature | The bar on the top strip (Ambient-Display-Encoding.md, 3.2.1) |
+| Probability of precipitation (any kind) | Breathing on the top strip (Ambient-Display-Encoding.md, 3.3) |
+
+and this value for **the night that began yesterday** and **the night that begins today** (a night is named by the local date of the evening it begins, 4.7):
+
+| Value | Used for |
+|---|---|
+| Forecast low temperature | The night notch on the top strip (Ambient-Display-Encoding.md, 3.2.2) |
 
 The city may declare a parking snow emergency when 4 or more inches of snow are forecast. City officials weigh pavement temperature, post-storm temperatures, snow already on the ground and other factors. None of that is duplicated here: only the forecast 4 inch criterion is tracked, as the constant $4 \text{ in} = 101.6 \text{ mm}$.
 
@@ -73,16 +79,19 @@ GET https://api.weather.gov/gridpoints/BOX/70,102
 
 ### 3.1 Properties used
 
-The response carries about 60 forecast properties. Four of its fields are read:
+The response carries about 60 forecast properties. Five of its fields are read:
 
 | Field | Meaning | Unit in the feed |
 |---|---|---|
 | `updateTime` | When NWS last updated the grid | ISO 8601 timestamp |
 | `maxTemperature` | Daily high | `wmoUnit:degC` |
+| `minTemperature` | Overnight low | `wmoUnit:degC` |
 | `probabilityOfPrecipitation` | Probability of precipitation of any type | `wmoUnit:percent` |
 | `snowfallAmount` | Snow accumulation | `wmoUnit:mm` |
 
-Each of the three series has the form `{ "uom": ..., "values": [ { "validTime": "<start>/<duration>", "value": <number> }, ... ] }`. The unit is read from `uom` and never assumed: degrees Fahrenheit are converted to Celsius, and centimeters and meters are converted to millimeters. Any other unit makes the feed unusable.
+Each of the four series has the form `{ "uom": ..., "values": [ { "validTime": "<start>/<duration>", "value": <number> }, ... ] }`. The unit is read from `uom` and never assumed: degrees Fahrenheit are converted to Celsius, and centimeters and meters are converted to millimeters. Any other unit makes the feed unusable.
+
+`minTemperature` is **optional**: a feed without it, or with an unrecognised unit for it, is still used for everything else and simply reports no lows (the top strip then shows no night notch). The other three series remain required, as before.
 
 There is no snow-specific probability anywhere in the feed. `probabilityOfPrecipitation` is the chance of any precipitation, of any type.
 
@@ -95,6 +104,7 @@ There is no snow-specific probability anywhere in the feed. `probabilityOfPrecip
 | `snowfallAmount` | All `PT1H`, contiguous, about 158 hours (6.6 days) |
 | `probabilityOfPrecipitation` | 1 hour near the start, growing to 49 hours (`P2DT1H`) farther out |
 | `maxTemperature` | One per day, 13 hours each (`PT13H`), starting 12:00Z (8 a.m. EDT, 7 a.m. EST) |
+| `minTemperature` | One per night, 14 hours each (`PT14H`), starting 00:00Z (8 p.m. EDT, 7 p.m. EST) and ending 14:00Z (10 a.m. EDT, 9 a.m. EST); in a capture taken after the forecast cycle starts, a leading remainder of the night just ended, cut at the cycle start (`2026-10-28T11:00:00+00:00/PT3H` in the 2026-10-28 morning capture) |
 
 Durations therefore include a day component. The series start at the beginning of the current forecast cycle (11:00Z in the morning capture), not at the time of the request or at midnight, and hours that have passed drop out as the day goes on. Today's `maxTemperature` interval is no longer listed once its window has ended.
 
@@ -148,6 +158,18 @@ It reads as "the chance of precipitation, given that the forecast calls for snow
 
 Because the feed's coverage starts at the current forecast cycle (3.2), "today" figures describe the remainder of the day from that point, except for the carried-forward high and probability (4.1, 4.2). Tomorrow is fully covered.
 
+### 4.7 Forecast low (per night)
+
+Lows are kept **per night**, and a night is named by the local date $N$ of the evening on which it begins: "the night of November 11" runs from the evening of November 11 to the morning of November 12.
+
+The low for night $N$ is the `minTemperature` interval that **starts inside local day $N$ at or after local noon** (in practice at 7 or 8 p.m. local). Its value is reported in °C, the unit the feed uses, converted from °F if the feed ever says so.
+
+- An interval that starts **before local noon** is the remainder of the previous night, cut at the start of the forecast cycle (3.2). It is not used: its window is mostly over and its value no longer describes the whole night. The value already held for that night is kept.
+- As with the high (4.1), the value last seen for the same night is **carried forward** when the feed drops or truncates it.
+- The display needs the night that **began yesterday** from midnight until its 6 a.m. rollover (Ambient-Display-Encoding.md, 3.4.2), after the local day has changed. The snapshot therefore keeps yesterday's night as well as today's and later ones (5.3). The feed itself still lists that night's full interval until its window ends at 14:00Z, after the 6 a.m. rollover, so the carried-forward value matters mainly when the morning's fetches fail.
+
+Comparing the low with the typical low (for the morning the night ends, $N + 1$) is the display logic's job, not this module's.
+
 ---
 
 ## 5. Polling and failure handling
@@ -177,6 +199,8 @@ The snapshot **expires 12 hours after the last good update**; after that every a
 
 The snapshot holds five local days (today through day 4). The sketch reads the first four (`FORECAST_DAYS_USED`, giving the snow risk at least 72 hours of look-ahead) and the fifth keeps all four correct after midnight even when the first fetch of the new day has not yet succeeded.
 
+The snapshot also holds the lows for the nights beginning yesterday through day 4 (4.7). Yesterday's night is the one shown from midnight until 6 a.m.; when the local day changes, today's night becomes yesterday's rather than being discarded. The 12-hour expiry applies to the lows as to everything else.
+
 ---
 
 ## 6. Architecture
@@ -191,9 +215,9 @@ The design separates the parts that need no hardware from the part that does, fo
 
 - **Input is a byte source.** The parser reads from an abstract source with two operations, read one byte and read a block. A file, a block of memory and the HTTPS connection implement it. The parser cannot tell them apart, which is what allows a saved file to stand in for the network.
 - **Time is injected.** Every operation takes the current time as an argument. Nothing reads a clock internally, so any moment can be tested deterministically.
-- **Streaming with a filter.** The response is never held as text. ArduinoJson's filter keeps only the fields in 3.1 while the bytes stream through, so memory depends on the number of intervals kept, not the size of the response: about 30 KB of heap measured on a 64-bit host.
+- **Streaming with a filter.** The response is never held as text. ArduinoJson's filter keeps only the fields in 3.1 while the bytes stream through, so memory depends on the number of intervals kept, not the size of the response: about 30 KB of heap measured on a 64-bit host (29.6 KB without the lows, 30.0 KB with them).
 - **Accessors return values, never fetch.** Fetching and reading are separate, so the display can read the latest snapshot at any time without blocking.
-- **Values are grouped as they are used together.** The high and the precipitation probability are returned together; the snow amount, probability and start time are returned together.
+- **Values are grouped as they are used together.** The high and the precipitation probability are returned together; the snow amount, probability and start time are returned together. The low is returned on its own, by night (yesterday's, today's, ...), because it rolls over at a different hour from the day's values.
 
 ---
 
@@ -203,6 +227,7 @@ The design separates the parts that need no hardware from the part that does, fo
 - **Fixtures are raw captures.** A fixture is the unmodified response, not a trimmed extract, so the tests exercise the same filter, key order, extra properties and interval formats the device sees.
 - **Synthetic fixtures are real captures with values spliced in.** Only the values under test are edited (a storm, a unit, a missing high), so everything else in the file remains the real structure. Real captures of actual snow events complement them, because they can contain quirks that synthetic edits do not; the schema is identical across NWS forecast offices, so a capture from any US location is representative.
 - **Cases covered:** the real feed; an amount well above the threshold; exactly 4 inches; a storm across midnight; trace snow; Fahrenheit; an unrecognised unit; today's high missing; the 25-hour fall-back day; truncated, HTML, error-document and empty responses; staleness; rollover past midnight; failure leaving the previous snapshot intact.
+- **Cases for the low (4.7), covered in `testLows()`:** the leading remainder interval ignored (the 2026-10-28 morning capture has one); `minTemperature` missing, and with an unrecognised unit (lows absent, everything else still parsed); lows in Fahrenheit; yesterday's night still available after midnight, including when the post-midnight fetch fails; the night that spans the fall-back change (the night of October 31, 2026: from 00:00Z November 1 = 8 p.m. EDT to 14:00Z = 9 a.m. EST).
 - **Independent cross-check.** The values computed from the real capture are compared with a second implementation in a different language, written separately.
 - **A command-line front end** prints the values for a given file and time, and can read from a URL, which allows the same fixtures to be served by a mock HTTP server that returns errors, hangs or truncated bodies, to exercise the failure policy on the device. A mock server leaves TLS untested; TLS is exercised only against the real service.
 

@@ -8,61 +8,65 @@ const float MAX_DELTA_C = 100.0f;      // far beyond any real deviation; keeps t
 
 const int DAYS_IN_MONTH_LEAP[12] = { 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 
-// Linear interpolation of the three LED channels from a to b by pct percent (0..100).
-Rgb blend(const Rgb& a, const Rgb& b, int pct) {
-  Rgb o;
-  o.r = (uint8_t)lroundf(a.r + (b.r - (float)a.r) * pct / 100.0f);
-  o.g = (uint8_t)lroundf(a.g + (b.g - (float)a.g) * pct / 100.0f);
-  o.b = (uint8_t)lroundf(a.b + (b.b - (float)a.b) * pct / 100.0f);
-  return o;
-}
+}  // namespace
 
+namespace {
+// Position of a date in a leap-year table (0 = January 1), or -1 for a date that does not exist.
+int leapYearIndex(int month, int mday) {
+  if (month < 1 || month > 12 || mday < 1 || mday > DAYS_IN_MONTH_LEAP[month - 1]) return -1;
+  int index = mday - 1;
+  for (int m = 0; m < month - 1; m++) index += DAYS_IN_MONTH_LEAP[m];
+  return index;
+}
 }  // namespace
 
 float typicalHighC(int month, int mday) {
-  if (month < 1 || month > 12 || mday < 1 || mday > DAYS_IN_MONTH_LEAP[month - 1]) return NAN;
-  int index = mday - 1;
-  for (int m = 0; m < month - 1; m++) index += DAYS_IN_MONTH_LEAP[m];
-  return TYPICAL_HIGH_C[index];
+  int i = leapYearIndex(month, mday);
+  return i < 0 ? NAN : TYPICAL_HIGH_C[i];
 }
 
-TopShape topShapeFor(float deltaC) {
-  TopShape s = { 0, 0, 0, 0 };
-  if (!(fabsf(deltaC) > 0.0f)) return s;                       // zero or NaN
-  // The small epsilon keeps an exact half or whole degree (7.2 - 0.2 in floating point...) from
-  // falling just below its boundary.
+float typicalLowC(int month, int mday) {
+  int i = leapYearIndex(month, mday);
+  return i < 0 ? NAN : TYPICAL_LOW_C[i];
+}
+
+int topDayOffset(int hour, int tomorrowAfterHour) { return hour >= tomorrowAfterHour ? 1 : 0; }
+int topNightOffset(int hour, int lowAfterHour) { return hour >= lowAfterHour ? 0 : -1; }
+
+namespace {
+// floor(2|d|) with the epsilon that keeps an exact half or whole degree (7.2 - 0.2 in floating point...)
+// from falling just below its boundary; 0 for NaN; capped at 30.
+int halfDegrees(float deltaC) {
+  if (!(fabsf(deltaC) > 0.0f)) return 0;                       // zero or NaN
   float a = fabsf(deltaC);
   if (!(a < MAX_DELTA_C)) a = MAX_DELTA_C;                     // also keeps infinity out of the int conversion
-  int half = (int)floorf(a * 2.0f + 0.001f);
-  int full = (int)floorf(a * BLEED_STEPS_PER_C + 0.001f);
-  if (half > TOP_GROUP_PIXELS) half = TOP_GROUP_PIXELS;       // the hot (cold) group has 20 pixels
-  // `full` is not capped at 20: the bleed keeps advancing through the temperate group as the
-  // deviation grows, until every pixel of it is fully shifted (see weatherTopImage).
-  if (deltaC > 0) { s.hotPixels = half;  s.hotBleed = full; }
-  else            { s.coldPixels = half; s.coldBleed = full; }
-  return s;
+  int n = (int)floorf(a * TOP_PIXELS_PER_C + 0.001f);
+  return n > TOP_HALF_PIXELS ? TOP_HALF_PIXELS : n;
+}
+}  // namespace
+
+int barPixelsFor(float deltaC) {
+  int n = halfDegrees(deltaC);
+  return deltaC < 0 ? -n : n;
 }
 
-void weatherTopImage(bool haveDelta, float deltaC, Rgb out[TOP_STRIP_PIXELS]) {
-  const Rgb dark = { 0, 0, 0 };
-  const int centerFirst = TOP_GROUP_PIXELS, centerLast = 2 * TOP_GROUP_PIXELS - 1;
-  for (int i = 0; i < TOP_STRIP_PIXELS; i++)
-    out[i] = (i >= centerFirst && i <= centerLast) ? WEATHER_TYPICAL : dark;
-  if (!haveDelta) return;
+int notchBoundaryFor(float deltaC) {
+  int b = TOP_HALF_PIXELS + (deltaC < 0 ? -halfDegrees(deltaC) : halfDegrees(deltaC));
+  if (b < 1) b = 1;
+  if (b > TOP_STRIP_PIXELS - 1) b = TOP_STRIP_PIXELS - 1;
+  return b;
+}
 
-  TopShape s = topShapeFor(deltaC);
-  for (int i = 0; i < s.hotPixels; i++)  out[centerLast + 1 + i] = WEATHER_SCARLET;
-  for (int i = 0; i < s.coldPixels; i++) out[centerFirst - 1 - i] = WEATHER_SKY_BLUE;
-  // The pixel j places in from the temperate group's edge is shifted BLEED_PERCENT_PER_STEP x (bleed - j), at most 100%.
-  // The shifted region therefore keeps advancing as the deviation grows, until the whole group is
-  // fully shifted (at the defaults 29 degrees: the far pixel, j = 19, reaches 100%). It never leaves the temperate
-  // group: scarlett does not reach the cold group and sky blue does not reach the hot group.
-  for (int j = 0; j < s.hotBleed && j < TOP_GROUP_PIXELS; j++) {       // j = 0 is the right edge
-    int pct = BLEED_PERCENT_PER_STEP * (s.hotBleed - j);
-    out[centerLast - j] = blend(WEATHER_TYPICAL, WEATHER_SCARLET, pct > 100 ? 100 : pct);
+void weatherTopImage(bool haveHigh, float highDeltaC, bool haveLow, float lowDeltaC, Rgb out[TOP_STRIP_PIXELS]) {
+  for (int i = 0; i < TOP_STRIP_PIXELS; i++) out[i] = WEATHER_TYPICAL;
+  if (haveHigh) {
+    int n = barPixelsFor(highDeltaC);
+    for (int i = 0; i < n; i++)  out[TOP_HALF_PIXELS + i] = WEATHER_SCARLET;
+    for (int i = 0; i < -n; i++) out[TOP_HALF_PIXELS - 1 - i] = WEATHER_SKY_BLUE;
   }
-  for (int j = 0; j < s.coldBleed && j < TOP_GROUP_PIXELS; j++) {      // j = 0 is the left edge
-    int pct = BLEED_PERCENT_PER_STEP * (s.coldBleed - j);
-    out[centerFirst + j] = blend(WEATHER_TYPICAL, WEATHER_SKY_BLUE, pct > 100 ? 100 : pct);
+  if (haveLow && !isnan(lowDeltaC)) {
+    int b = notchBoundaryFor(lowDeltaC);
+    const Rgb dark = { 0, 0, 0 };
+    for (int i = 0; i < NOTCH_PIXELS; i++) out[b - 1 + i] = dark;
   }
 }

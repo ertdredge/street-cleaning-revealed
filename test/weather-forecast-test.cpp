@@ -244,6 +244,77 @@ static void testDstFallBack() {
   CHECK_NEAR(wf.tempPrecip(FORECAST_TOMORROW, sat).highC, 16.6667, 0.001);   // Sunday, whose interval starts 07:00 EST
 }
 
+static void testLows() {
+  printf("overnight lows\n");
+  // The real capture (2026-10-28 15:14 EDT). Its first minTemperature interval is the remainder of
+  // the night just ended, 2026-10-28T11:00Z/PT3H (7 a.m. EDT): it starts before local noon and is ignored.
+  WeatherForecast wf;
+  CHECK_STATUS(load(wf, RAW, NOW), FORECAST_OK);
+  LowOutlook l = wf.nightLow(NIGHT_LAST, NOW);                      // night of Oct 27: only the remainder exists
+  CHECK(!l.valid && isnan(l.lowC));
+  l = wf.nightLow(NIGHT_TONIGHT, NOW);                              // night of Oct 28: 00:00Z Oct 29 = 8 p.m. EDT
+  CHECK(l.valid);
+  CHECK_NEAR(l.lowC, 6.1111, 0.001);                                // not the 1.11 of the remainder
+  CHECK_NEAR(wf.nightLow(NIGHT_TOMORROW, NOW).lowC, 12.2222, 0.001);
+  CHECK_NEAR(wf.nightLow(NIGHT_DAY_2, NOW).lowC, 5.0, 0.001);
+  CHECK_NEAR(wf.nightLow(NIGHT_DAY_3, NOW).lowC, 1.6667, 0.001);    // the night of Oct 31, across the fall-back change
+  CHECK_NEAR(wf.nightLow(4, NOW).lowC, 6.6667, 0.001);              // day 4 is held too
+  CHECK(!wf.nightLow(5, NOW).valid);                                // beyond the snapshot
+  CHECK(!wf.nightLow(-2, NOW).valid);
+
+  // 12-hour expiry, as for the other values
+  CHECK(wf.nightLow(NIGHT_TONIGHT, NOW + 11 * 3600).valid);
+  CHECK(!wf.nightLow(NIGHT_TONIGHT, NOW + 13 * 3600).valid);
+  CHECK(!WeatherForecast().nightLow(NIGHT_TONIGHT, NOW).valid);     // never updated
+
+  // Just after midnight, with no new fetch: the night that began yesterday evening is the snapshot's
+  // "tonight" and is kept (it is shown until 6 a.m.).
+  time_t late = local(2026, 10, 29, 0, 30);
+  CHECK_NEAR(wf.nightLow(NIGHT_LAST, late).lowC, 6.1111, 0.001);
+  CHECK_NEAR(wf.nightLow(NIGHT_TONIGHT, late).lowC, 12.2222, 0.001);
+
+  // A fetch after midnight carries yesterday's night from the feed...
+  WeatherForecast after;
+  CHECK_STATUS(load(after, RAW, late), FORECAST_OK);
+  CHECK_NEAR(after.nightLow(NIGHT_LAST, late).lowC, 6.1111, 0.001);
+  // ...and when that feed has no lows, the earlier snapshot's values are carried forward per night.
+  CHECK_STATUS(loadSynthetic(wf, "no-lows.json", late), FORECAST_OK);
+  CHECK_NEAR(wf.nightLow(NIGHT_LAST, late).lowC, 6.1111, 0.001);
+  CHECK_NEAR(wf.nightLow(NIGHT_TONIGHT, late).lowC, 12.2222, 0.001);
+  CHECK(!wf.nightLow(4, late).valid);                               // day 4 of the new snapshot was never seen
+  WeatherForecast alone;                                            // with no earlier snapshot: no lows, rest intact
+  CHECK_STATUS(loadSynthetic(alone, "no-lows.json", NOW), FORECAST_OK);
+  CHECK(!alone.nightLow(NIGHT_TONIGHT, NOW).valid);
+  CHECK_NEAR(alone.tempPrecip(FORECAST_TOMORROW, NOW).highC, 20.0, 0.001);
+  CHECK(alone.snow(FORECAST_TODAY, NOW).valid);
+
+  // an unrecognised unit for the lows is not a schema error
+  WeatherForecast bad;
+  CHECK_STATUS(loadSynthetic(bad, "lows-bad-unit.json", NOW), FORECAST_OK);
+  CHECK(!bad.nightLow(NIGHT_TONIGHT, NOW).valid && !bad.nightLow(NIGHT_TOMORROW, NOW).valid);
+  CHECK_NEAR(bad.tempPrecip(FORECAST_TODAY, NOW).highC, 13.3333, 0.001);
+
+  // degrees Fahrenheit are converted
+  WeatherForecast f;
+  CHECK_STATUS(loadSynthetic(f, "lows-fahrenheit.json", NOW), FORECAST_OK);
+  CHECK_NEAR(f.nightLow(NIGHT_TONIGHT, NOW).lowC, 6.1111, 0.001);
+  CHECK_NEAR(f.nightLow(NIGHT_DAY_3, NOW).lowC, 1.6667, 0.001);
+
+  // the night of Oct 31 begins 8 p.m. EDT and ends 9 a.m. EST (a 15-hour night): still found from Saturday evening
+  time_t sat = local(2026, 10, 31, 20, 0);
+  WeatherForecast dst;
+  CHECK_STATUS(load(dst, RAW, sat), FORECAST_OK);
+  CHECK_NEAR(dst.nightLow(NIGHT_TONIGHT, sat).lowC, 1.6667, 0.001);
+  time_t sun = local(2026, 11, 1, 3, 0);                            // 3 a.m. EST, the same night in progress
+  CHECK_NEAR(dst.nightLow(NIGHT_LAST, sun).lowC, 1.6667, 0.001);
+
+  // a failed fetch keeps the lows
+  WeatherForecast keep;
+  CHECK_STATUS(load(keep, RAW, NOW), FORECAST_OK);
+  CHECK_STATUS(loadSynthetic(keep, "truncated.json", NOW + 600), FORECAST_PARSE_ERROR);
+  CHECK_NEAR(keep.nightLow(NIGHT_TONIGHT, NOW + 600).lowC, 6.1111, 0.001);
+}
+
 // An HTTP body sent with chunked transfer encoding (what a server may do despite an HTTP/1.0
 // request) must give the same result as the plain body; a plain body must pass through untouched.
 static std::string readAll(const char* name) {
@@ -363,6 +434,7 @@ int main() {
   testFailuresKeepPreviousData();
   testTodaysHighCarriedForward();
   testDstFallBack();
+  testLows();
   testChunkedTransfer();
   testWrongClock();
   printf("\n%d checks, %d failed\n", checks, failures);

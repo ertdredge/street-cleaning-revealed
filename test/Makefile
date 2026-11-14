@@ -26,7 +26,7 @@ test: weather-forecast-test weather-display-test snow-risk-test snow-emergency-t
 	./snow-risk-test
 	./snow-emergency-test
 
-DISPLAY_CORE   = $(SRC)/weather-display.cpp $(SRC)/typical-highs.cpp
+DISPLAY_CORE   = $(SRC)/weather-display.cpp $(SRC)/typical-highs.cpp $(SRC)/typical-lows.cpp
 DISPLAY_HDR    = $(SRC)/weather-display.h
 
 weather-display-test: weather-display-test.cpp $(DISPLAY_CORE) $(DISPLAY_HDR)

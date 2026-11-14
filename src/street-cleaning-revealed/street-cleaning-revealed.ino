@@ -27,6 +27,8 @@
 //                  `precip off` goes back to the NWS forecast. (The top strip shows the weather.)
 //   high C         force the top strip's forecast high to C degrees Celsius, then render;
 //                  `high off` goes back to the NWS forecast.
+//   low C          force the forecast low of the night the top strip's notch shows to C degrees
+//                  Celsius, then render; `low off` goes back to the NWS forecast.
 //   snow P IN H    pretend the forecast calls for snow: P percent chance, IN inches, accumulation
 //                  starting H hours from now (negative: already falling). Drives the snow removal
 //                  risk on one bar (see 1.2.1), the sparkles on that bar and the bottom strip, and the top sparkle. `snow off` goes back
@@ -40,7 +42,7 @@
 //                  (US Eastern). While an emergency is declared or in effect it counts as a 100% chance
 //                  of 4 inches starting at its start time, so the snow bar goes to 90 when it starts;
 //                  after its end it is ignored. The override is not saved across a reboot.
-//   forecast       print the weather snapshot: age, and today's and tomorrow's high, precipitation and snow
+//   forecast       print the weather snapshot: age, each day's high, precipitation and snow, and each night's low
 //   bottom S       bottom strip pattern, same scale
 //   color r|g|b|w|y|c|m   set the current color (default w)
 //   bright B       set brightness, clamped to 8..48
@@ -106,7 +108,7 @@ const int MARCH_MIN_SPEED = 10;          // speed at risk = MARCH_THRESHOLD
 const int MARCH_MAX_SPEED = 100;         // speed at risk = 90
 
 // Top strip: the weather forecast (docs/Ambient-Display-Encoding.md section 3).
-const int TOP_PIXELS = TOP_STRIP_PIXELS;   // three groups of 20 (cold, temperate, hot); must equal STRIP_TOP.len
+const int TOP_PIXELS = TOP_STRIP_PIXELS;   // one 60-pixel scale: typical at the center; must equal STRIP_TOP.len
 const float BREATH_MAX_HZ = 0.5f;        // breathing rate at 100% chance of precipitation (2 s period)
 const uint8_t BREATH_MIN_LEVEL = 38;     // dimmest point of a breath, out of 255 (about 15% of the PWM level)
 const float SPARKLE_PER_SEC = 8.0f;      // snow sparkle: new flashes per second, per strip
@@ -114,7 +116,8 @@ const float SPARKLE_SECONDS = 0.4f;      // ...each fading from white over this 
 const uint8_t SPARKLE_LEVEL = 54;        // the white of a flash: constant-luminance white (54,54,54)
 const float BREATH_GAMMA = 2.2f;         // the breath is a cosine in perceived brightness; its PWM level is that, to this power
 const int PRECIP_MIN_PERCENT = 10;       // below this the forecast counts as dry (NWS uses 2% for "not expected"): no breathing
-const int TOMORROW_AFTER_HOUR = 17;      // from 5 pm the top strip shows tomorrow's forecast
+const int TOMORROW_AFTER_HOUR = 17;      // from 5 pm the top strip's bar, breathing and sparkle show tomorrow's forecast
+const int LOW_AFTER_HOUR = 6;            // from 6 am the night notch shows tonight's low; before that, the night that began yesterday
 const uint32_t WEATHER_POLL_MS = 3600000UL;    // refresh the forecast hourly
 const uint32_t WEATHER_RETRY_MS = 300000UL;    // after a failed fetch, try again in 5 minutes
 const char* const NWS_URL = "https://api.weather.gov/gridpoints/BOX/70,102";   // Somerville (grid cell fixed at design time)
@@ -376,6 +379,7 @@ volatile bool reportRequested = false;
 volatile bool weatherUpdated = false;      // set by the poll task after a good fetch; loop() re-renders
 int precipOverride = -1;                   // serial `precip P` test override; -1 = use the forecast
 float highOverride = NAN;                  // serial `high C` test override of the forecast high; NaN = use the forecast
+float lowOverride = NAN;                   // serial `low C` test override of the night's forecast low; NaN = use the forecast
 volatile int lastFetchStatus = -1;            // ForecastStatus of the last fetch, -1 = none yet (for `forecast`)
 volatile int lastFetchHttp = 0;
 volatile float lastFetchSeconds = 0.0f;
@@ -393,6 +397,13 @@ time_t realNow() { return time(nullptr) + simClockOffset; }
 void onTimeSync(struct timeval* tv) {
   (void)tv;
   simClockOffset = 0;
+}
+
+LowOutlook weatherNightLow(int night, time_t now) {
+  xSemaphoreTake(forecastMutex, portMAX_DELAY);
+  LowOutlook r = forecast.nightLow(night, now);
+  xSemaphoreGive(forecastMutex);
+  return r;
 }
 
 TempPrecip weatherTempPrecip(ForecastDay day, time_t now) {
@@ -741,6 +752,19 @@ float typicalHighForDay(time_t now, int dayOffset) {
   return typicalHighC(t.tm_mon + 1, t.tm_mday);
 }
 
+// Typical low (deg C) for the night that begins `nightOffset` days after the date containing `now`
+// (-1 = last night, 0 = tonight). A night is compared with the typical low of the morning it ends on:
+// the date after the one it begins on (Ambient-Display-Encoding.md 3.2.3).
+float typicalLowForNight(time_t now, int nightOffset) {
+  struct tm t;
+  localtime_r(&now, &t);
+  t.tm_mday += nightOffset + 1;
+  t.tm_hour = 12; t.tm_min = 0; t.tm_sec = 0;
+  t.tm_isdst = -1;
+  mktime(&t);
+  return typicalLowC(t.tm_mon + 1, t.tm_mday);
+}
+
 void printForecast() {
   xSemaphoreTake(forecastMutex, portMAX_DELAY);
   WeatherForecast snap = forecast;
@@ -752,6 +776,13 @@ void printForecast() {
   if (!snap.hasData()) { logMsg(LOGLVL_INFO, "forecast: no good data yet\n"); return; }
   logMsg(LOGLVL_INFO, "forecast: fetched %ld min ago\n", (long)((now - snap.lastGoodAt()) / 60));
   static const char* const DAY_NAMES[FORECAST_DAYS_USED] = { "today", "tomorrow", "day 2", "day 3" };
+  for (int n = NIGHT_LAST; n <= NIGHT_DAY_3; n++) {      // the night named by the evening it begins; lows vs the typical low of the morning it ends
+    LowOutlook l = snap.nightLow(n, now);
+    const char* name = n == NIGHT_LAST ? "last night" : n == NIGHT_TONIGHT ? "tonight" : n == NIGHT_TOMORROW ? "tomorrow night" : n == NIGHT_DAY_2 ? "day 2 night" : "day 3 night";
+    if (!l.valid) { logMsg(LOGLVL_INFO, "  %s: no low\n", name); continue; }
+    float typical = typicalLowForNight(now, n);
+    logMsg(LOGLVL_INFO, "  %s: low %.1f C (typical %.1f C, %+.1f)\n", name, l.lowC, typical, l.lowC - typical);
+  }
   for (int d = 0; d < FORECAST_DAYS_USED; d++) {
     TempPrecip t = snap.tempPrecip((ForecastDay)d, now);
     if (!t.valid) { logMsg(LOGLVL_INFO, "  %s: no fresh data\n", DAY_NAMES[d]); continue; }
@@ -986,25 +1017,31 @@ void updateFromClock(bool verbose) {
   rightSparkle = snowOnRight && snowRisk > cleanR;   // and to the whole snow bar whenever snow, not street
   leftSparkle = !snowOnRight && snowRisk > cleanL;   // cleaning, sets its risk
 
-  // Top: the weather forecast, today's or (from 5 pm) tomorrow's. Dark when there is no fresh forecast.
+  // Top: the weather forecast. The bar, breathing and sparkle show today (tomorrow from 5 pm); the night notch shows the night that began yesterday until 6 am, then tonight. Dark when there is no fresh forecast.
   time_t wnow = realNow();                  // real time even while the clock is simulated
   struct tm lt;
   localtime_r(&wnow, &lt);
-  ForecastDay day = lt.tm_hour >= TOMORROW_AFTER_HOUR ? FORECAST_TOMORROW : FORECAST_TODAY;
+  ForecastDay day = topDayOffset(lt.tm_hour, TOMORROW_AFTER_HOUR) == 1 ? FORECAST_TOMORROW : FORECAST_TODAY;
+  int night = topNightOffset(lt.tm_hour, LOW_AFTER_HOUR);                 // -1 until 06:00, then tonight
   TempPrecip wx = weatherTempPrecip(day, wnow);
-  bool haveWx = wx.valid || precipOverride >= 0 || !std::isnan(highOverride);
+  LowOutlook lw = weatherNightLow(night, wnow);
+  bool haveWx = wx.valid || lw.valid || precipOverride >= 0 || !std::isnan(highOverride) || !std::isnan(lowOverride);
   int rawPrecip = precipOverride >= 0 ? precipOverride : max(wx.precipPercent, 0);
   int precip = effectivePrecip(rawPrecip);
   float highC = !std::isnan(highOverride) ? highOverride : wx.highC;     // NaN when the feed has no high for that day
   float typicalC = typicalHighForDay(wnow, day == FORECAST_TOMORROW ? 1 : 0);
   bool haveDelta = !std::isnan(highC) && !std::isnan(typicalC);
   float deltaC = haveDelta ? highC - typicalC : 0.0f;
+  float lowC = !std::isnan(lowOverride) ? lowOverride : lw.lowC;         // NaN when the feed has no low for that night
+  float typicalLowNightC = typicalLowForNight(wnow, night);
+  bool haveLowDelta = !std::isnan(lowC) && !std::isnan(typicalLowNightC);
+  float lowDeltaC = haveLowDelta ? lowC - typicalLowNightC : 0.0f;
   if (haveWx) {
     Rgb img[TOP_PIXELS];
-    weatherTopImage(haveDelta, deltaC, img);
+    weatherTopImage(haveDelta, deltaC, haveLowDelta, lowDeltaC, img);
     CRGB base[TOP_PIXELS];
     for (int i = 0; i < TOP_PIXELS; i++) base[i] = CRGB(img[i].r, img[i].g, img[i].b);
-    setTop(base, precip);
+    setTop(base, precip);     // breathing scales every pixel, so the black notch stays dark
   } else {
     setTopDark();
   }
@@ -1025,15 +1062,22 @@ void updateFromClock(bool verbose) {
                     day == FORECAST_TOMORROW ? "tomorrow's" : "today's",
                     rawPrecip, precipOverride >= 0 ? " (overridden)" : "", breathRateHz(precip));
       if (haveDelta) {
-        TopShape sh = topShapeFor(deltaC);
+        int bar = barPixelsFor(deltaC);
         logMsg(verboseLevel, "top: high %.1f C%s vs typical %.1f C (%+.1f): %s\n", highC,
                       !std::isnan(highOverride) ? " (overridden)" : "", typicalC, deltaC,
-                      sh.hotPixels ? "hot" : sh.coldPixels ? "cold" : "about typical");
-        if (sh.hotPixels || sh.coldPixels)
-          logMsg(verboseLevel, "top: %d %s pixels, bleed depth %d into the center\n",
-                        sh.hotPixels + sh.coldPixels, sh.hotPixels ? "scarlett" : "sky blue", sh.hotBleed + sh.coldBleed);
+                      bar > 0 ? "warm" : bar < 0 ? "cold" : "about typical");
+        if (bar != 0)
+          logMsg(verboseLevel, "top: bar of %d %s pixels, %s from the center\n",
+                        abs(bar), bar > 0 ? "scarlet" : "sky blue", bar > 0 ? "pixels 30 up" : "pixels 29 down");
       } else {
-        logMsg(verboseLevel, "top: no forecast high, default display\n");
+        logMsg(verboseLevel, "top: no forecast high, no bar\n");
+      }
+      if (haveLowDelta) {
+        int b = notchBoundaryFor(lowDeltaC);
+        logMsg(verboseLevel, "top: %s night's low %.1f C%s vs typical %.1f C (%+.1f): notch on pixels %d and %d\n",
+                      night < 0 ? "last" : "tonight's", lowC, !std::isnan(lowOverride) ? " (overridden)" : "", typicalLowNightC, lowDeltaC, b - 1, b);
+      } else {
+        logMsg(verboseLevel, "top: no forecast low for %s night, no notch\n", night < 0 ? "last" : "tonight's");
       }
     } else logMsg(verboseLevel, "top: no forecast, dark\n");
     if (snow.any) {
@@ -1139,7 +1183,7 @@ void handle(String line) {
   String cmd = sp < 0 ? line : line.substring(0, sp);
   String arg = sp < 0 ? "" : line.substring(sp + 1);
   arg.trim();
-  if (cmd != "status" && cmd != "risk" && cmd != "precip" && cmd != "high" && cmd != "snow" && cmd != "emergency" && cmd != "forecast") {
+  if (cmd != "status" && cmd != "risk" && cmd != "precip" && cmd != "high" && cmd != "low" && cmd != "snow" && cmd != "emergency" && cmd != "forecast") {
     sweepActive = false;
     if (suiteActive) { suiteActive = false; suiteRestore(); }
   }   // any other command ends a sweep or test suite
@@ -1160,6 +1204,13 @@ void handle(String line) {
     else if (arg.length()) highOverride = constrain(arg.toFloat(), -60.0f, 60.0f);
     if (!std::isnan(highOverride)) logMsg(LOGLVL_INFO, "high override %.1f C\n", highOverride);
     else logMsg(LOGLVL_INFO, "high override off (using the forecast)\n");
+    updateFromClock(true);
+  }
+  else if (cmd == "low") {
+    if (arg == "off") lowOverride = NAN;
+    else if (arg.length()) lowOverride = constrain(arg.toFloat(), -60.0f, 60.0f);
+    if (!std::isnan(lowOverride)) logMsg(LOGLVL_INFO, "low override %.1f C\n", lowOverride);
+    else logMsg(LOGLVL_INFO, "low override off (using the forecast)\n");
     updateFromClock(true);
   }
   else if (cmd == "snow") {
@@ -1287,7 +1338,7 @@ void handle(String line) {
     logMsg(LOGLVL_INFO, "remaining %.1f h -> risk %d, color %d,%d,%d\n", r, k, c.r, c.g, c.b);
   }
   else if (cmd == "status") printStatus();
-  else logMsg(LOGLVL_INFO, "commands: left N | right N | bottom S | precip P|off | high C|off | snow P IN H|off | emergency [start|stop WHEN|off] | forecast | wifi [scan] | relay [on|off] | color X | bright B | off | time [YYYY-MM-DD HH:MM] | test-suite | risk H | status\n");
+  else logMsg(LOGLVL_INFO, "commands: left N | right N | bottom S | precip P|off | high C|off | low C|off | snow P IN H|off | emergency [start|stop WHEN|off] | forecast | wifi [scan] | relay [on|off] | color X | bright B | off | time [YYYY-MM-DD HH:MM] | test-suite | risk H | status\n");
 }
 
 String inbuf;

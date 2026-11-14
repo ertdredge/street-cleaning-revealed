@@ -4,7 +4,7 @@
 
 ## 1. Purpose and one-paragraph summary
 
-Outdoor LED art installation that frames a window of roughly **38.5" x 60"*. The bottom strip animates to urge parallel parked cars to the safe side of the street when street cleaning is imminent, and changes color based on trash collection or yard waste collection. The top strip shows the day's weather forecast (a default display, and a breathing animation when precipitation is forecast; temperature and snow come later). The **two side strips act as bar graphs** whose displayed value ranges over **0–90** and is **updated hourly**, with colors and values that reflect how risky it is to park on that side of the street. Control is by an **ESP32 microcontroller running FastLED**. The controller uses **WiFi and HTTPS** to read the National Weather Service forecast, which drives the top strip and the forecast snow risk on the side bars, and the City of Somerville's news feed, which reports parking snow emergencies the city actually declares.
+Outdoor LED art installation that frames a window of roughly **38.5" x 60"*. The bottom strip animates to urge parallel parked cars to the safe side of the street when street cleaning is imminent, and changes color based on trash collection or yard waste collection. The top strip shows the weather forecast: a bar from the window's center for how the day's forecast high compares with typical, a dark notch on the same scale for tonight's forecast low, a breathing animation when precipitation is forecast and a sparkle when snow is. The **two side strips act as bar graphs** whose displayed value ranges over **0–90** and is **updated hourly**, with colors and values that reflect how risky it is to park on that side of the street. Control is by an **ESP32 microcontroller running FastLED**. The controller uses **WiFi and HTTPS** to read the National Weather Service forecast, which drives the top strip and the forecast snow risk on the side bars, and the City of Somerville's news feed, which reports parking snow emergencies the city actually declares.
 
 ---
 
@@ -16,7 +16,7 @@ Outdoor LED art installation that frames a window of roughly **38.5" x 60"*. The
 |---|---|
 | Geometry | Frame a window ~105 cm wide × ~160 cm tall. Perimeter ≈ 2 × (105 + 160) = **530 cm**. A single ~5 m reel is "slightly too short" for the full 530 cm |
 | Bottom | Animate for parking and color for waste collection. |
-| Top | Weather forecast for today (tomorrow's from 5 pm): three groups of 20 pixels for cold, temperate and hot; breathing when precipitation is forecast. See `Ambient-Display-Encoding.md` section 3. |
+| Top | Weather forecast for today (tomorrow's from 5 pm): on a pale green-white background, a bar from the center, scarlet to the right for a high above typical or sky blue to the left for one below; a two-pixel dark notch on the same scale for tonight's low (rolls over at 6 am); breathing when precipitation is forecast; sparkle when snow is. See `Ambient-Display-Encoding.md` section 3. |
 | Sides | Bar graphs, values 0–90, updated hourly. |
 | Firmware | FastLED on ESP32. |
 | Connectivity | WiFi + HTTPS to fetch the NWS gridpoint forecast hourly (design: `weather-feed.md`) and the city's news RSS feed hourly for declared parking snow emergencies (design: `snow-emergency-feed.md`). |
@@ -245,19 +245,19 @@ Considerations:
 1. ✅ **C1. WiFi bring-up.** Connect the ESP32 to WiFi.
 2. ✅ **C2. Time.** Use NTP so the schedules are meaningful; handle timezone (America/New_York) and DST.
 3. **C3. HTTPS fetch.** The NWS gridpoint feed (`https://api.weather.gov/gridpoints/BOX/70,102`) is fetched by `weather-feed.cpp` and parsed by `weather-forecast.cpp` (design in `weather-feed.md`). The fetch currently skips certificate verification (`setInsecure()`), which is acceptable for public read-only data driving an art installation but is not the plan's original goal; pinning a root certificate is supported by `HttpsForecastSource::open()` and remains a decision. TLS roots expire, so a pinned certificate needs a renewal plan.
-4. ✅ **C4. Forecast parsing.** Forecast high, probability of precipitation and snow values per local day, streamed through an ArduinoJson filter (about 30 KB of heap, never the 290 KB response). Replaces the original "keyword parse" idea. Host-tested against real captures and synthetic variants (`test/`).
+4. ✅ **C4. Forecast parsing.** Forecast high, probability of precipitation and snow values per local day (the overnight low is added in Phase T, T3), streamed through an ArduinoJson filter (about 30 KB of heap, never the 290 KB response). Replaces the original "keyword parse" idea. Host-tested against real captures and synthetic variants (`test/`).
 5. ✅ **C5. Polling.** A FreeRTOS task on core 0 (20 KB stack) fetches hourly once WiFi is up and the clock is set, and retries after 5 minutes on failure. The renderer on core 1 only reads the latest snapshot, under a mutex. A failure never discards good data, and the snapshot expires after 12 hours.
 6. **C6. Persistence.** Store the last good forecast in NVS flash so that a reboot does not leave the top strip dark until the first fetch. Not started; optional.
-7. **C7. Observability.** Serial commands today: `forecast` prints the snapshot age and today's and tomorrow's values, and `precip P|off` overrides the precipitation probability for testing. A status LED pattern or a trivial web endpoint is not started.
+7. **C7. Observability.** Serial commands today: `forecast` prints the snapshot age, each day's values and each night's low; `low C|off` overrides the night's low, and `precip P|off` overrides the precipitation probability for testing. A status LED pattern or a trivial web endpoint is not started.
 
 ### Phase W — Top strip weather display
 
 Encoding: `Ambient-Display-Encoding.md` section 3.
 
-1. ✅ **W1. Default display (3.1).** Center 20 pixels spring green (0, 72, 36); the cold and hot groups dark.
+1. ✅ **W1. Default display (3.1).** Center 20 pixels spring green (0, 72, 36); the cold and hot groups dark. *Superseded by Phase T: all 60 pixels lit in a pale green-white background.*
 2. ✅ **W2. Forecast precipitation (3.3).** All lit pixels breathe at a rate proportional to the probability of precipitation: 0.5 Hz (2 s period) at 100%, none below 10% (`PRECIP_MIN_PERCENT`; NWS reports 2% for "not expected"), brightness between 15% and full. `BREATH_MAX_HZ` and `BREATH_MIN_LEVEL` are constants in the sketch.
 3. ✅ **W3. No-data state.** The top strip is completely dark when there is no forecast or it is stale.
-4. ✅ **W4. Deviations from typical (3.2).** The forecast high for the displayed day is compared with `docs/typical-high-temperatures.csv` (366 rows including February 29, compiled into the sketch by `bin/make-typical-highs`). Scarlett grows into the hot group (one pixel per half degree) and bleeds into the center (10% per pixel); sky blue mirrors it on the cold side. Pure logic and host tests: `weather-display.h/.cpp`, `test/weather-display-test.cpp`. Serial: `high C|off` overrides the forecast high.
+4. ✅ **W4. Deviations from typical (3.2).** The forecast high for the displayed day is compared with `docs/typical-high-temperatures.csv` (366 rows including February 29, compiled into the sketch by `bin/make-typical-highs`). Scarlett grows into the hot group (one pixel per half degree) and bleeds into the center (10% per pixel); sky blue mirrors it on the cold side. Pure logic and host tests: `weather-display.h/.cpp`, `test/weather-display-test.cpp`. Serial: `high C|off` overrides the forecast high. *Superseded by Phase T: a single bar from the center of the strip, two pixels per °C, with no bleed.*
 5. ✅ **W5. Snow or sleet (3.3.1).** Random pixels of the top strip flash white (and fade over `SPARKLE_SECONDS`, `SPARKLE_PER_SEC` new flashes a second) when snow is forecast for the displayed day. The feed carries snow accumulation only, so sleet is not distinguished.
 6. ✅ **W6. Snow removal risk (1.2), NWS data only.** The snow forecasts for today and the next three days (at least 72 hours ahead) are examined as separate snow events (a storm split across midnight is rejoined), and the riskiest event counts; the street cleaning risk function is evaluated for the hours until the snow starts, then scaled by inches / 4 (under 4 in) and percent / 100. Only the bar for the side where snow-emergency parking is banned (right in winter 2026/27, left in 2027/28, alternating from July 1) shows the larger of that and its street cleaning risk; above the march threshold (55) the bottom strip also sparkles, and the whole snow bar sparkles whenever the snow risk exceeds its street cleaning risk. City-declared snow emergencies are added in Phase S. Pure logic and host tests: `snow-risk.h/.cpp`, `test/snow-risk-test.cpp`. Serial: `snow P IN H|off` overrides the snow forecast.
 
@@ -284,15 +284,46 @@ Design: `snow-emergency-feed.md`. Display rule: `Ambient-Display-Encoding.md` 1.
 
 *Exit criteria:* a declared emergency moves the snow bar on schedule from the feed alone, survives a reboot, and clears at its announced end (or 96 hours after its start).
 
-### Phase D — Deployment design
+### Phase T — Top strip redesign: center bar and night notch
 
-1. **D1. Power architecture.** LPV-150-12 (IP67, 12 V, 150 W class) sits indoors with the controller; add a fuse per run; run two fused 12 V feeds out through the two cables; add the 12 V → 5 V buck converter for the Feather (no USB in deployment).
-2. **D2. Controller placement (indoors).** No outdoor enclosure needed. Mount the Feather on the terminal-block FeatherWing and keep the 74AHCT125 and passives on a small board in an ordinary indoor enclosure or mount; keep data wires short and twist each data wire with a ground wire if the run to the casing exceeds about 2 m. Outdoor-facing items are the two cables, the casing penetration (seal it, add a drip loop), and the strip joints.
-3. **D3. Strip mounting.** Plastic channel or isolating tape (not bare aluminum against the PCB). Plan expansion/contraction and adhesive performance across Massachusetts winters.
-4. **D4. Connections and sealing.** Keep all connectors at weather-protected points; re-seal cut ends; consider drip loops at every cable run.
-5. **D5. Thermal envelope.** The strip is rated −20 to +40 °C. Decide whether to accept the risk in winter extremes or add mitigation.
-6. **D6. Mains wiring.** The LPV-150-12 has bare flying leads on its AC side; connect them only through an enclosed, strain-relieved connection on a suitably protected circuit. Confirm requirements with local code or an electrician.
-7. **D7. Burn-in.** A multi-day run at deployment brightness on the bench or in place before the final mounting.
+Encoding: `Ambient-Display-Encoding.md` section 3 (rewritten 2026-11-11). Feed: `weather-feed.md` 1, 3.1, 3.2, 4.7 and 5.3. Replaces the three-group display of W1 and W4; breathing (W2), the no-data state (W3) and the snow sparkle (W5) are unchanged.
+
+1. ✅ **T1. Design (2026-11-11).** One 60-pixel scale with "typical" at the window's center, two pixels per °C (about one per °F). The high is a solid bar from the center, scarlet to the right or sky blue to the left; tonight's low is a two-pixel dark notch on the same scale. The background is a pale green-tinted off-white (35, 43, 38) at 75% of the bar colors' luminance, so warm and cold are read from position and brightness, not hue alone. The notch rolls over at 6 am, separately from the 5 pm rollover of the high, precipitation and snow. Considered and not used: bars growing in from the ends on a fully lit spring green field (scarlet on spring green at equal luminance nearly vanishes for red–green color-blind viewers); "frost and glow" split halves (low on the left half, high on the right); a bright bead on an always-lit blue-to-scarlet gradient.
+2. ✅ **T2. Typical lows.** Done: `bin/make-typical-highs` now generates both `typical-highs.cpp` and `typical-lows.cpp` (`TYPICAL_LOW_C[366]`) in one run (same name and usage, so the cheat-sheet is unchanged), and `typicalLowC(month, mday)` sits beside `typicalHighC()` with the same NAN rule; tests in `test/weather-display-test.cpp`. Original brief: use the newly added `docs/typical-low-temperatures.csv`: 366 rows including February 29, in the format of `typical-high-temperatures.csv` (`Month/Day,Typical Low`) and from the same kind of source (e.g. the NOAA 1991–2020 daily normal minimum for Boston) to extend `bin/make-typical-highs` to also generate `TYPICAL_LOW_C[366]` (e.g. into `typical-lows.cpp`) and add `typicalLowC(month, mday)` beside `typicalHighC()` in `weather-display.h/.cpp`. Update the cheat-sheet (§8) if the generator's name or usage changes.
+3. ✅ **T3. Forecast low in the parser** (done: `nightLow(night, now)` with `NIGHT_LAST`/`NIGHT_TONIGHT`..., `LowOutlook`; the snapshot holds the nights beginning yesterday through day 4; fixtures `no-lows`, `lows-bad-unit`, `lows-fahrenheit`; `weather-cli` prints the nights; peak parser heap 29.6 KB → 30.0 KB on a 64-bit host, and the independent cross-check matched the real capture's five nights; the `NIGHT_LAST` low is unknown in that capture because only the cut remainder exists) (`weather-forecast.h/.cpp`; design `weather-feed.md` 4.7).
+   - Add `minTemperature` to the ArduinoJson filter as an **optional** series: not in `NEEDED`, so a feed without it (or with an unrecognised unit for it) still parses and reports no lows. Same unit handling as `maxTemperature`.
+   - Lows per night, named by the local date the night begins: the interval that starts in that local day at or after local noon. Ignore an interval starting before noon (the previous night's remainder, cut at the forecast cycle start). Carry the last-seen value forward for the same night.
+   - Keep the night that began yesterday in the snapshot (shift it at the local-day change rather than discard it): it is shown from midnight until 6 am.
+   - A new accessor returning one night's low (e.g. `nightLow(night, now)` with yesterday's and today's nights at least), valid flag and `NAN` when unknown; the 12-hour expiry applies.
+   - Re-measure the parser's heap (about 30 KB today); the filter keeps about seven more intervals.
+   - Host tests in `test/weather-forecast-test.cpp`: the real captures (the 2026-10-28 morning capture has the remainder interval `11:00Z/PT3H`) and synthetic fixtures from `test/make-synthetic-fixtures.rb` for the cases listed in `weather-feed.md` section 7. `weather-cli` prints the lows. Extend the independent cross-check (`weather-feed.md` section 7) to the lows.
+4. ✅ **T4. Display logic** (done: `barPixelsFor`, `notchBoundaryFor`, `weatherTopImage(haveHigh, highDelta, haveLow, lowDelta, out)`, and the pure rollover helpers `topDayOffset`/`topNightOffset` so the 06:00 and 17:00 switches are host-tested; 1998 checks) (`weather-display.h/.cpp`; encoding `Ambient-Display-Encoding.md` 3.1–3.2).
+   - Remove `TOP_GROUP_PIXELS`, `BLEED_STEPS_PER_C`, `BLEED_PERCENT_PER_STEP`, `TopShape`, `topShapeFor()` and `blend()`.
+   - `WEATHER_TYPICAL` becomes (35, 43, 38). `WEATHER_SCARLET` (173, 24, 0) and `WEATHER_SKY_BLUE` (38, 58, 66) are unchanged.
+   - New: `TOP_PIXELS_PER_C = 2`, `NOTCH_PIXELS = 2`; a function for the signed bar length (one pixel per half degree, rounded down with the existing epsilon, capped at ±30; NaN and infinity handled as today) and one for the notch boundary $b$ (clamped to 1–59).
+   - `weatherTopImage(haveHigh, highDeltaC, haveLow, lowDeltaC, out)`: background, then the bar, then the notch (black) over both.
+   - Rewrite `test/weather-display-test.cpp`: no high and no low; ±0.49, ±0.5, an exact 7.0 (14 pixels), the 7.2 example (pixels 30–43), ±15 and beyond, NaN and infinity; the notch at the center, inside the bar, at the bar's tip, opposite the bar, and clamped at both ends; the −2.3 example (pixels 25 and 26).
+5. ✅ **T5. Sketch** (done, not yet compiled for the ESP32 by Claude; in place of test-suite cases, the rollovers are covered by the host tests, because the suite's simulated clock does not move the weather, which uses `realNow()`) (`street-cleaning-revealed.ino`).
+   - `LOW_AFTER_HOUR = 6` beside `TOMORROW_AFTER_HOUR = 17`: the night shown is the one beginning today from 06:00, the one that began yesterday before 06:00 (`Ambient-Display-Encoding.md` 3.4.2). Use `realNow()`, as the high does, so a simulated clock does not change it.
+   - The typical low is for the date the night ends (the night's date + 1). Pass both deviations to `weatherTopImage()`.
+   - Breathing: the gain applies to the background and the bar; the notch, being black, stays dark. The snow sparkle keeps `SPARKLE_LEVEL` and is not scaled by the background or the breath (the existing mix in the render already does this).
+   - Serial: `low C|off` overrides tonight's low, like `high C|off`; `forecast` prints the lows held (yesterday's and today's nights at least); the verbose render report prints the bar length and the notch pixels in place of the `TopShape` line; update the command comments at the top of the sketch. Test-suite cases across the 06:00 and 17:00 rollovers.
+   - Logging (`logging.md`): add the night's low to the forecast lines sent to Loki.
+6. **T6. Hardware check.** Compile and upload, then on the installed strip:
+   - Tune `WEATHER_TYPICAL` for the strip's white point: it should read as faintly green, not white or blue, at 75% of the bar colors' luminance.
+   - Confirm a short bar (one or two pixels) and the notch are visible from 20 m in non-direct daylight (§2.2).
+   - Confirm the snow sparkle stands out: its white (54, 54, 54) is only about a third brighter than the background and close to it in hue. If it is too faint, raise the top strip's flash level or dim the background further.
+   - Photograph the strip in a few states and check them with a color-blindness simulator.
+7. **T7. Documentation after wiring.** Record the measured heap in C4, and reconcile `weather-feed.md` 4.7 and `Ambient-Display-Encoding.md` section 3 with what was built.
+
+*Exit criteria:* from the street, a viewer can tell a warm or cold forecast high from the side and length of the bar, and a warm or cold night from the side of the notch, without relying on color; the notch changes nights at 6 am and the bar days at 5 pm; a feed without `minTemperature` still drives everything except the notch; the host tests pass.
+
+### Phase D — Deployment
+
+1. ✅ **D1. Final hardware.** Recompile and deploy on a QuinLED Dig-Next-2.
+2. ✅ **D2. Power architecture.** Mean Well GST90A12-P1M (12V 6.67 Amp 80W) sits indoors with the controller.
+3. ✅ **D3. Connections and sealing.** Keep all connectors at weather-protected points; re-seal cut ends.
+4. ✅ **D4. Strip mounting.** Mount to window frame with clips.
 
 ---
 

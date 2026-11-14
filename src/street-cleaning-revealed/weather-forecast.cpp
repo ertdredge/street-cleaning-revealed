@@ -87,14 +87,15 @@ bool parseValidTime(const char* vt, time_t* start, time_t* end) {
 
 // Local midnight that starts the day `offsetDays` after the day containing `t`. The TZ must be
 // set; DST days come out 23 or 25 hours long.
-time_t localDayStart(time_t t, int offsetDays) {
+time_t localTimeOn(time_t t, int offsetDays, int hour) {
   struct tm lt;
   localtime_r(&t, &lt);
   lt.tm_mday += offsetDays;
-  lt.tm_hour = 0; lt.tm_min = 0; lt.tm_sec = 0;
+  lt.tm_hour = hour; lt.tm_min = 0; lt.tm_sec = 0;
   lt.tm_isdst = -1;
   return mktime(&lt);
 }
+time_t localDayStart(time_t t, int offsetDays) { return localTimeOn(t, offsetDays, 0); }
 
 bool getSeries(JsonVariantConst props, const char* name, JsonArrayConst* values, const char** uom) {
   JsonVariantConst s = props[name];
@@ -110,13 +111,14 @@ const int MAX_POP = 144;    // five days of hourly intervals is 120; anything be
 // The feed is parsed into `out` (five local days from `now`). Nothing is written to the caller's
 // snapshot here; update() decides whether to keep the result.
 ForecastStatus parseFeed(ForecastSource& src, time_t now, const ForecastConfig& cfg,
-                         ForecastDayData out[FORECAST_STORED_DAYS], time_t* feedUpdated) {
-  static const char* const NEEDED[] = { "maxTemperature", "probabilityOfPrecipitation", "snowfallAmount" };
+                         ForecastDayData out[FORECAST_STORED_DAYS], ForecastNightData lows[FORECAST_STORED_NIGHTS],
+                         time_t* feedUpdated) {
+  static const char* const KEPT[] = { "maxTemperature", "probabilityOfPrecipitation", "snowfallAmount", "minTemperature" };
 
   // Keep only what we use: the feed has some 60 properties and most of its 290 KB is indentation.
   JsonDocument filter;
   filter["properties"]["updateTime"] = true;
-  for (const char* name : NEEDED) {
+  for (const char* name : KEPT) {
     filter["properties"][name]["uom"] = true;
     filter["properties"][name]["values"][0]["validTime"] = true;
     filter["properties"][name]["values"][0]["value"] = true;
@@ -149,6 +151,16 @@ ForecastStatus parseFeed(ForecastSource& src, time_t now, const ForecastConfig& 
     out[i].snowStart = 0;
   }
 
+  // Nights: night k (k = 0 is the night that began yesterday) begins on local day offset k - 1; the
+  // interval that starts inside that local day at or after local noon is its low.
+  time_t nightDay[FORECAST_STORED_NIGHTS + 1], nightNoon[FORECAST_STORED_NIGHTS];
+  for (int k = 0; k <= FORECAST_STORED_NIGHTS; k++) nightDay[k] = localDayStart(now, k - 1);
+  for (int k = 0; k < FORECAST_STORED_NIGHTS; k++) {
+    nightNoon[k] = localTimeOn(now, k - 1, 12);
+    lows[k].dayStart = nightDay[k];
+    lows[k].lowC = NAN;
+  }
+
   JsonArrayConst vals;
   const char* uom;
 
@@ -168,6 +180,29 @@ ForecastStatus parseFeed(ForecastSource& src, time_t now, const ForecastConfig& 
       if (s >= ds[i] && s < ds[i + 1]) {
         if (std::isnan(out[i].highC) || c > out[i].highC) out[i].highC = c;
         break;
+      }
+    }
+  }
+
+  // -- forecast lows (optional): the interval that starts on a local day at or after noon is that evening's night
+  if (getSeries(props, "minTemperature", &vals, &uom)) {
+    bool lowF = false, lowOk = true;
+    if (strcmp(uom, "wmoUnit:degC") == 0) lowF = false;
+    else if (strcmp(uom, "wmoUnit:degF") == 0) lowF = true;
+    else lowOk = false;                                   // unknown unit: report no lows, keep everything else
+    if (lowOk) {
+      for (JsonVariantConst e : vals) {
+        time_t s, en;
+        JsonVariantConst v = e["value"];
+        if (v.isNull() || !parseValidTime(e["validTime"] | "", &s, &en)) continue;
+        float c = v.as<float>();
+        if (lowF) c = (c - 32.0f) * 5.0f / 9.0f;
+        for (int k = 0; k < FORECAST_STORED_NIGHTS; k++) {
+          if (s >= nightNoon[k] && s < nightDay[k + 1]) {
+            if (std::isnan(lows[k].lowC) || c < lows[k].lowC) lows[k].lowC = c;
+            break;
+          }
+        }
       }
     }
   }
@@ -354,12 +389,14 @@ size_t DechunkingSource::readBytes(char* buf, size_t n) {
 WeatherForecast::WeatherForecast(const ForecastConfig& cfg)
     : cfg_(cfg), have_(false), lastGood_(0), feedUpdated_(0), last_(FORECAST_IO_ERROR) {
   memset(days_, 0, sizeof days_);
+  memset(nights_, 0, sizeof nights_);
 }
 
 ForecastStatus WeatherForecast::update(ForecastSource& src, time_t now) {
   ForecastDayData fresh[FORECAST_STORED_DAYS];
+  ForecastNightData freshNights[FORECAST_STORED_NIGHTS];
   time_t feedTime = 0;
-  last_ = parseFeed(src, now, cfg_, fresh, &feedTime);
+  last_ = parseFeed(src, now, cfg_, fresh, freshNights, &feedTime);
   if (last_ != FORECAST_OK) return last_;      // keep the previous snapshot
 
   // The feed drops a day's high, and the probabilities of its elapsed intervals, as the day
@@ -372,8 +409,17 @@ ForecastStatus WeatherForecast::update(ForecastSource& src, time_t now) {
         if (fresh[i].precip < 0) fresh[i].precip = days_[j].precip;
       }
     }
+    // Lows are carried forward per night too. The night that began yesterday is held here, and kept
+    // when the local day changes: yesterday's date is a night of the previous snapshot.
+    for (int i = 0; i < FORECAST_STORED_NIGHTS; i++) {
+      for (int j = 0; j < FORECAST_STORED_NIGHTS; j++) {
+        if (nights_[j].dayStart == freshNights[i].dayStart && std::isnan(freshNights[i].lowC))
+          freshNights[i].lowC = nights_[j].lowC;
+      }
+    }
   }
   memcpy(days_, fresh, sizeof days_);
+  memcpy(nights_, freshNights, sizeof nights_);
   have_ = true;
   lastGood_ = now;
   feedUpdated_ = feedTime;
@@ -408,6 +454,19 @@ SnowOutlook WeatherForecast::snow(ForecastDay day, time_t now) const {
     r.amountMm = d->snowMm;
     r.probabilityPercent = d->snowProb;
     r.startTime = d->snowStart;
+  }
+  return r;
+}
+
+LowOutlook WeatherForecast::nightLow(int night, time_t now) const {
+  LowOutlook r = { false, NAN };
+  if (!have_ || now - lastGood_ > cfg_.staleAfterSeconds) return r;
+  time_t target = localDayStart(now, night);
+  for (int i = 0; i < FORECAST_STORED_NIGHTS; i++) {
+    if (nights_[i].dayStart == target) {
+      if (!std::isnan(nights_[i].lowC)) { r.valid = true; r.lowC = nights_[i].lowC; }
+      break;
+    }
   }
   return r;
 }

@@ -125,51 +125,71 @@ The alternating weeks count from the 2nd Saturday in May, so which weeks have ya
 
 ## 3. Top
 
-The top LED strip represents basic information about today's weather forecast, or tomorrow's weather forecast if after 5pm.
+The top LED strip shows the weather forecast: the forecast high temperature, the probability of precipitation and any snow for the displayed day (today's until 5 pm, tomorrow's from 5 pm), and tonight's forecast low temperature (which night is shown rolls over separately, at 6 am; see 3.4.2).
 
-The 60 pixels of the top LED strip is divided into three groups of 20 pixels: Left (cold), center (temperate), and right (hot).
+The 60 pixels form a single scale, read like a number line or a thermometer laid on its side. The center of the strip (the boundary between pixels 29 and 30, counting from 0 at the left end) stands for "typical for the date". Warmer than typical is to the right and colder to the left, at **two pixels per degree Celsius**, so each half of the strip (30 pixels) spans 15ºC. Two pixels per ºC is about one pixel per ºF, which is an easy way to read it.
+
+The high is a lit bar that grows from the center; the night's low is a dark notch. Mnemonic: *the day is the bright bar, the night is the dark gap; warmer is to the right.* Both are read from position and length, not only from color, so the display works for color-blind viewers.
 
 Calculations are in degrees Celsius.
 
-### 3.1 Default display
+### 3.1 Background
 
-The center 20 pixels are always illuminated.  On a day with an unremarkable weather forecast (no precipitation forecast and a forecast high temperature exactly equal to historical averages for that day of the year) those center 20 pixels are illuminated spring green (0, 72, 36), while the left 20 pixels and right 20 pixels are dark.
+All 60 pixels are lit, except where the night notch (3.2.2) is, in a pale green-tinted off-white, `WEATHER_TYPICAL` (35, 43, 38): hue about 143º, saturation about 19%. Its luminance (0.2126 R + 0.7152 G + 0.0722 B on the raw values, about 41) is 75% of the luminance of the scarlet and sky blue bar colors (54), so a bar differs from the background in brightness as well as in hue.
 
-### 3.2 Deviations from typical for today's forecast high temperature
+On a day whose forecast high is within half a degree of typical the whole strip is this background, apart from the notch.
 
-The forecast high temperature for today is compared to the [typical](typical-high-temperatures.csv) high temperature for the current day of the year.
+The background replaces the earlier spring green (0, 72, 36). Spring green and scarlet had equal luminance and differed by hue alone, so for red–green color-blind viewers a scarlet bar on a spring green background nearly disappeared. A near-neutral background with a brightness difference keeps the bar visible to every viewer. The exact tint is to be confirmed on the installed strip, whose white point decides whether (35, 43, 38) reads as faintly green.
 
-e.g. if today is April 23 and the forecast high temperature is 22.8ºC, that is compared to the historically typical high temperature for April 23 in Boston which is 15.6ºC and it is determined that today's forecast high is 7.2ºC higher than typical.  This number guides the display.
+### 3.2 Temperatures
 
-#### 3.2.1 Forecast warm or hot day
+#### 3.2.1 Forecast high: the bar
 
-If today's forecast high is higher than typical, then the color scarlett (255, 36, 0) *grows* rightward into the right block of 20 pixels, and *bleeds* leftward into the center block of 20 pixels, as follows:
+The forecast high temperature for the displayed day is compared to the [typical](typical-high-temperatures.csv) high temperature for that date. The difference, $\Delta_{high}$ = forecast high − typical high, sets a bar of $n = \lfloor 2\,|\Delta_{high}| \rfloor$ pixels (one pixel per half degree, rounded down), at most 30.
 
-For every *half* degree above typical the next pixel in the right (hot) group of 20 pixels is illuminated scarlett.  So, for example, if today's forecast high is 7.2ºC higher than typical then the 14 leftmost pixels in the right block of 20 pixels are illuminated scarlett.
+- **Warmer than typical** ($\Delta_{high} \ge 0.5$): a scarlet (173, 24, 0) bar grows rightward from the center, on pixels 30 to $30 + n - 1$.
+- **Colder than typical** ($\Delta_{high} \le -0.5$): a sky blue (38, 58, 66) bar grows leftward from the center, on pixels 29 down to $29 - n + 1$.
+- **Within half a degree of typical:** no bar.
 
-Additionally, for every *full* degree above typical that number of pixels on the rightmost side of the center block are color shifted away from their default spring green and toward scarlett, 10% more than their neighbot to the left.  So, for example, if today's forecast high is 7.2ºC higher than typical then the 7 rightmost pixels in the center block of 20 pixels have their color adjusted toward scarlett: The rightmost is adusted 70%, the next one is adjusted 60%, and onwards until the 7th pixel from the right edge of the center block is adjusted 10% toward scarlett.
+The bar is solid: every bar pixel is the full bar color, with no blending into the background. 15ºC or more from typical fills that half of the strip.
 
-#### 3.2.2 Forecast cool or cold day
+e.g. if the displayed day is April 23 and the forecast high is 22.8ºC, that is compared to the typical high for April 23 in Boston, 15.6ºC: the forecast is 7.2ºC above typical, so $n = \lfloor 14.4 \rfloor = 14$ and pixels 30 to 43 are scarlet.
 
-If today's forecast high is colder than typical, then the color sky blue (135, 206, 235) *grows* leftward into the left block of 20 pixels, and *bleeds* rightward into the center block of 20 pixels, exactly mirroring the behavior of the warm day but with sky blue instead of scarlett.
+#### 3.2.2 Tonight's low: the night notch
+
+The forecast low temperature for the night shown (3.4.2) is compared to the [typical](typical-low-temperatures.csv) low temperature. The difference, $\Delta_{low}$ = forecast low − typical low, places a **notch** of two adjacent dark (unlit) pixels on the same scale as the bar.
+
+The notch straddles the scale boundary
+
+$$
+b = 30 + \operatorname{sign}(\Delta_{low}) \cdot \lfloor 2\,|\Delta_{low}| \rfloor
+$$
+
+clamped to $1 \le b \le 59$: pixels $b - 1$ and $b$ are dark. A low within half a degree of typical puts the notch on pixels 29 and 30, at the center. A low 15ºC or more from typical puts it on the two end pixels of that side (0 and 1, or 58 and 59).
+
+The boundary $b$ is where the tip of a bar for the same deviation would be, so the notch and the bar share one scale: a notch right of center is a warmer than typical night, left of center a colder one.
+
+e.g. a low 2.3ºC below typical gives $b = 30 - \lfloor 4.6 \rfloor = 26$: pixels 25 and 26 are dark.
+
+The notch is drawn over the background and over the bar alike. Where it falls inside the bar it shows as a two-pixel gap in the bar. When the low and the high are about equally far from typical in the same direction (common, since one air mass usually sets both) the notch sits at the bar's tip: the bar's last pixel and the first background pixel beyond it are dark.
 
 #### 3.2.3 Details
 
-- The comparison uses the date being displayed: today's, or tomorrow's from 5pm (3.4.2).
-- Half degrees and full degrees are counted by rounding down. A forecast less than half a degree from typical shows the default display.
-- The number of scarlett (or sky blue) pixels is capped at the 20 pixels of its group, but the bleed is not capped: it advances one pixel per degree without limit. The pixel $j$ places in from the center block's edge is shifted by $10\% \times (bleed - j)$, up to 100%. The whole center block is therefore fully scarlett (or sky blue) from 29ºC away, and scarlett never enters the left block nor sky blue the right block.
-- When the forecast has no high temperature (for example the feed has dropped it), the default display of 3.1 is shown.
-- The typical highs are compiled into the sketch from the CSV, which has a row for every day including February 29. After editing the CSV run `bin/make-typical-highs`.
+- The high is compared using the displayed day (today's, or tomorrow's from 5 pm; 3.4.2).
+- The low of a night is compared with the typical low for the date of the **morning on which the night ends**: the minimum usually comes near dawn, and a daily normal minimum belongs to the calendar day it occurs in. e.g. the night of November 11 to 12 is compared with the typical low for November 12.
+- Half degrees are counted by rounding down. An exact half degree counts despite floating-point rounding: a deviation of 7.0ºC gives 14 pixels, not 13.
+- When the forecast has no high for the displayed day (for example the feed has dropped it) there is no bar; the background and the notch are still shown. When it has no low for the night shown there is no notch.
+- The typical highs and lows are compiled into the sketch from the CSVs, which have a row for every day including February 29. After editing a CSV run `bin/make-typical-highs` (which also generates the lows).
 
 ### 3.3 Forecast precipitation
 
-If *any* precipitation is forecast for today, all illuminated pixels in the top LED strip perform a "breathing" animation, cycling slowly between maximum and minimum illumination.  The rate of the breathing animation is proportional to the likelihood of precipitation: 100% probability of precipitation is the highest "breathing" speed, while 50% probability of precipitation is 50% of the highest "breathing" speed, and 0% probability of precipitation is no breathing animation used.  A probability under 10% is treated as 0%: NWS reports 2% to mean precipitation is not expected but not impossible, which is best shown as the static no-precipitation display.
+If *any* precipitation is forecast for the displayed day, all lit pixels in the top LED strip (the background and the bar; the notch stays dark) perform a "breathing" animation, cycling slowly between maximum and minimum illumination.  The rate of the breathing animation is proportional to the likelihood of precipitation: 100% probability of precipitation is the highest "breathing" speed, while 50% probability of precipitation is 50% of the highest "breathing" speed, and 0% probability of precipitation is no breathing animation used.  A probability under 10% is treated as 0%: NWS reports 2% to mean precipitation is not expected but not impossible, which is best shown as the static no-precipitation display.
 
 #### 3.3.1 Snow or sleet
 
-If any snow or sleet accumulation is forecast for today, a sparkle animation is added throughout the top LED strip pixels, with random pixels briefly flashing white.
+If any snow or sleet accumulation is forecast for the displayed day, a sparkle animation is added throughout the top LED strip pixels, with random pixels briefly flashing white. A flash may land on any pixel, including the notch.
 
-The top strip always represents today's forecast from midnight until 5pm and tomorrow's from 5pm until midnight (3.4.2), and this sparkle follows that forecast day. (The parking risk is different: it is driven by the hours until the snow is forecast to start, whichever day that is, and has its own sparkle; see 1.2.1.) The feed reports snow accumulation but not sleet, so any measurable forecast snow accumulation triggers it. A flash is full white (54, 54, 54, the luminance-matched white) and fades over 0.4 s; about 8 flashes start per second across the strip (`SPARKLE_PER_SEC`, `SPARKLE_SECONDS`).
+The top strip always represents today's forecast from midnight until 5pm and tomorrow's from 5pm until midnight (3.4.2), and this sparkle follows that forecast day. (The parking risk is different: it is driven by the hours until the snow is forecast to start, whichever day that is, and has its own sparkle; see 1.2.1.) The feed reports snow accumulation but not sleet, so any measurable forecast snow accumulation triggers it. A flash is full white (54, 54, 54, the luminance-matched white) and fades over 0.4 s; about 8 flashes start per second across the strip (`SPARKLE_PER_SEC`, `SPARKLE_SECONDS`). Flashes are not dimmed with the background (3.1) or by the breathing: they are always full white.
 
 ### 3.4 Update frequency
 
@@ -177,6 +197,17 @@ The top strip always represents today's forecast from midnight until 5pm and tom
 
 The National Weather Service API is refreshed once an hour.
 
-#### 3.4.2 Daily rollover
+#### 3.4.2 Rollovers
 
-At 5pm local time the top LED strip starts representing *tomorrow's* weather forecast (forecast high temperature and probability of precicpitation) instead of the remainder of today.
+The high and the low roll over at different times:
+
+- **5 pm:** the bar, the breathing and the snow sparkle switch from today's forecast to *tomorrow's* (forecast high, probability of precipitation and snow).
+- **6 am:** the notch switches from the night now ending, which began the previous evening, to *tonight*, the night beginning this evening.
+
+| Local time | Bar, breathing, sparkle | Night notch |
+|---|---|---|
+| 00:00–05:59 | Today | The night now ending (began yesterday evening) |
+| 06:00–16:59 | Today | Tonight |
+| 17:00–23:59 | Tomorrow | Tonight |
+
+So from 6 am to 5 pm the strip reads "today's high, then tonight's low", from 5 pm to midnight "tonight's low, then tomorrow's high", and until 6 am the notch keeps showing the night in progress.

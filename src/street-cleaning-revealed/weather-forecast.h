@@ -6,6 +6,8 @@
 //
 //   tempPrecip(day, now) -> TempPrecip   forecast high (deg C) and precipitation probability (%, any kind)
 //   snow(day, now)       -> SnowOutlook  snow amount, snow probability (%), snow start time
+//   nightLow(night, now) -> LowOutlook   forecast overnight low (deg C) for one night, named by the
+//                                        local date on which it begins; yesterday's night is kept
 //
 // The two groups are separate calls because they are normally used together: the high and the
 // precipitation probability for one display, the three snow items for another.
@@ -21,6 +23,8 @@
 //   maxTemperature              daily high, deg C (deg F is converted if the feed ever says so)
 //   probabilityOfPrecipitation  percent, in intervals of 1 to ~50 hours
 //   snowfallAmount              mm, one interval per hour
+//   minTemperature              overnight low, deg C; OPTIONAL (a feed without it, or with an unknown
+//                               unit for it, still parses and simply reports no lows)
 // Per local day:
 //   high           the maxTemperature interval that starts that day
 //   precip         the largest probability among the intervals that overlap that day
@@ -33,6 +37,12 @@
 //                  with measurable snow that day (0 when no snow is forecast). Read it as "chance
 //                  of precipitation, given that the forecast calls for snow", not as a calibrated
 //                  chance of reaching any particular depth.
+// Per night (weather-feed.md 4.7), named by the local date N of the evening it begins:
+//   low            the minTemperature interval that starts inside local day N at or after local noon
+//                  (in practice 7 or 8 p.m.). An interval that starts before noon is the previous
+//                  night's remainder, cut at the forecast cycle start, and is ignored. The last value
+//                  seen for the same night is carried forward when the feed drops it.
+// The night that began yesterday is kept (it is shown from midnight until 6 a.m.).
 // "Measurable" means at least ForecastConfig::minHourlySnowMm per hour (default 0.25 mm, about
 // 0.01 inch); trace amounts below that are ignored. The city's emergency threshold of 4 inches is
 // SNOW_EMERGENCY_MM; compare it yourself, this module makes no decision.
@@ -187,6 +197,16 @@ struct SnowOutlook {
   bool  snowForecast() const { return valid && startTime != 0; }
 };
 
+// A night is named by the local date on which it begins, counted from the day containing `now`:
+// NIGHT_LAST is the night that began yesterday evening (still in progress until about dawn),
+// NIGHT_TONIGHT the one that begins this evening.
+enum ForecastNight { NIGHT_LAST = -1, NIGHT_TONIGHT = 0, NIGHT_TOMORROW = 1, NIGHT_DAY_2 = 2, NIGHT_DAY_3 = 3 };
+
+struct LowOutlook {
+  bool  valid;           // false: no fresh data for that night, or the feed gave no low for it (lowC is NAN)
+  float lowC;            // forecast overnight low, deg C; NAN when unknown
+};
+
 // ---- Configuration -----------------------------------------------------------------------------
 struct ForecastConfig {
   float minHourlySnowMm;      // hourly snow below this is trace and ignored. Default 0.25 (about 0.01 in)
@@ -206,6 +226,13 @@ struct ForecastDayData {
 const int FORECAST_STORED_DAYS = 5;   // today through day 4: one more than FORECAST_DAYS_USED, so the four used days
                                       // are still all held for the hour after local midnight until the next fetch
 
+// Internal: one stored night. Public only so the parser in the .cpp can fill it.
+struct ForecastNightData {
+  time_t dayStart;     // local midnight starting the local day on which the night begins
+  float  lowC;         // NAN when unknown
+};
+const int FORECAST_STORED_NIGHTS = FORECAST_STORED_DAYS + 1;   // the night that began yesterday through the one beginning on day 4
+
 class WeatherForecast {
  public:
   explicit WeatherForecast(const ForecastConfig& cfg = ForecastConfig());
@@ -223,6 +250,11 @@ class WeatherForecast {
   // Snow amount, probability proxy and start time for `day`, as of `now`. Never blocks, never fetches.
   SnowOutlook snow(ForecastDay day, time_t now) const;
 
+  // Forecast low for one night (NIGHT_LAST ... NIGHT_DAY_3 or beyond, up to day 4), as of `now`. Never
+  // blocks, never fetches. valid is false, with lowC NAN, when the snapshot is stale or does not hold
+  // that night or the feed has no low for it. The comparison with the typical low is the display's job.
+  LowOutlook nightLow(int night, time_t now) const;
+
   bool           hasData() const { return have_; }               // any good update yet (even if stale)
   time_t         lastGoodAt() const { return lastGood_; }        // `now` of the last good update, 0 if none
   time_t         feedUpdatedAt() const { return feedUpdated_; }  // NWS's own updateTime of that feed, 0 if unknown
@@ -232,6 +264,7 @@ class WeatherForecast {
   const ForecastDayData* find(ForecastDay day, time_t now) const;
   ForecastConfig cfg_;
   ForecastDayData days_[FORECAST_STORED_DAYS];
+  ForecastNightData nights_[FORECAST_STORED_NIGHTS];
   bool have_;
   time_t lastGood_;
   time_t feedUpdated_;

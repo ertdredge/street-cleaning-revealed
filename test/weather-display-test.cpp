@@ -11,22 +11,6 @@ static int checks = 0, failures = 0;
 
 static bool same(const Rgb& a, const Rgb& b) { return a.r == b.r && a.g == b.g && a.b == b.b; }
 static bool dark(const Rgb& a) { return a.r == 0 && a.g == 0 && a.b == 0; }
-static bool nearRgb(const Rgb& a, const Rgb& b) { return abs(a.r - b.r) <= 1 && abs(a.g - b.g) <= 1 && abs(a.b - b.b) <= 1; }
-// What a pixel pct percent of the way from the temperate green to `target` should be, worked out here
-// independently of the implementation.
-static Rgb expected(const Rgb& target, int pct) {
-  double f = pct / 100.0;
-  Rgb o;
-  o.r = (uint8_t)floor(WEATHER_TYPICAL.r + (target.r - WEATHER_TYPICAL.r) * f + 0.5);
-  o.g = (uint8_t)floor(WEATHER_TYPICAL.g + (target.g - WEATHER_TYPICAL.g) * f + 0.5);
-  o.b = (uint8_t)floor(WEATHER_TYPICAL.b + (target.b - WEATHER_TYPICAL.b) * f + 0.5);
-  return o;
-}
-
-// The exact-value tests below describe the default bleed tuning; with other values they are skipped
-// (the properties that hold for any tuning are still checked).
-static const bool DEFAULT_TUNING = BLEED_STEPS_PER_C == 1.0f && BLEED_PERCENT_PER_STEP == 10;
-
 static void testTypicalHighs() {
   printf("typical highs\n");
   CHECK_NEAR(typicalHighC(1, 1), 3.3, 1e-4);
@@ -48,158 +32,148 @@ static void testTypicalHighs() {
     }
 }
 
-static void testShape() {
-  printf("shape\n");
-  TopShape s = topShapeFor(0.0f);
-  CHECK(s.hotPixels == 0 && s.hotBleed == 0 && s.coldPixels == 0 && s.coldBleed == 0);
-  s = topShapeFor(NAN);
-  CHECK(s.hotPixels == 0 && s.coldPixels == 0);
-  s = topShapeFor(0.4f);                                  // under half a degree: nothing
-  CHECK(s.hotPixels == 0 && s.hotBleed == 0);
-  s = topShapeFor(0.5f);
-  CHECK(s.hotPixels == 1 && s.hotBleed == 0);
-  s = topShapeFor(0.99f);
-  CHECK(s.hotPixels == 1 && s.hotBleed == 0);
-  if (!DEFAULT_TUNING) return;                            // the rest assumes the default bleed tuning
-  s = topShapeFor(1.0f);
-  CHECK(s.hotPixels == 2 && s.hotBleed == 1);
-  s = topShapeFor(22.8f - 15.6f);                         // the doc's example: 7.2 above typical
-  CHECK(s.hotPixels == 14 && s.hotBleed == 7 && s.coldPixels == 0 && s.coldBleed == 0);
-  s = topShapeFor(15.6f - 22.8f);                         // mirrored
-  CHECK(s.coldPixels == 14 && s.coldBleed == 7 && s.hotPixels == 0 && s.hotBleed == 0);
-  s = topShapeFor(2.0f);                                  // whole degrees must not fall just under
-  CHECK(s.hotPixels == 4 && s.hotBleed == 2);
-  s = topShapeFor((float)(13.3333 - 11.3333));
-  CHECK(s.hotPixels == 4 && s.hotBleed == 2);
-  s = topShapeFor(10.0f);
-  CHECK(s.hotPixels == 20 && s.hotBleed == 10);
-  s = topShapeFor(25.0f);                                 // the pixel count is capped at a group; the bleed is not
-  CHECK(s.hotPixels == 20 && s.hotBleed == 25);
-  s = topShapeFor(-25.0f);
-  CHECK(s.coldPixels == 20 && s.coldBleed == 25);
-  s = topShapeFor(1e30f);                                 // absurd values stay in range
-  CHECK(s.hotPixels == 20 && s.hotBleed > 25 && s.hotBleed <= 1000);
-  s = topShapeFor(INFINITY);
-  CHECK(s.hotPixels == 20 && s.hotBleed > 25);
-}
-
-static void testDefaultImage() {
-  printf("default display\n");
-  Rgb img[TOP_STRIP_PIXELS];
-  weatherTopImage(false, 99.0f, img);                     // no forecast high: the delta is ignored
-  for (int i = 0; i < TOP_STRIP_PIXELS; i++) {
-    if (i >= 20 && i < 40) CHECK(same(img[i], WEATHER_TYPICAL));
-    else CHECK(dark(img[i]));
-  }
-  weatherTopImage(true, 0.0f, img);                       // exactly typical: the same display
-  for (int i = 0; i < TOP_STRIP_PIXELS; i++) {
-    if (i >= 20 && i < 40) CHECK(same(img[i], WEATHER_TYPICAL));
-    else CHECK(dark(img[i]));
-  }
-  weatherTopImage(true, 0.3f, img);                       // under half a degree
-  for (int i = 0; i < TOP_STRIP_PIXELS; i++) CHECK(same(img[i], (i >= 20 && i < 40) ? WEATHER_TYPICAL : Rgb{0, 0, 0}));
-}
-
-static void testWarm() {
-  if (!DEFAULT_TUNING) { printf("testWarm skipped: non-default bleed tuning\n"); return; }
-  printf("warm day\n");
-  Rgb img[TOP_STRIP_PIXELS];
-  weatherTopImage(true, 7.2f, img);                       // 14 scarlett pixels; 7 bleed pixels
-  for (int i = 0; i < 20; i++) CHECK(dark(img[i]));       // the cold group stays dark
-  for (int i = 20; i < 33; i++) CHECK(same(img[i], WEATHER_TYPICAL));   // untouched green pixels
-  for (int j = 0; j < 7; j++)                             // pixel 39 is 70%, 38 is 60%, ... 33 is 10%
-    CHECK(nearRgb(img[39 - j], expected(WEATHER_SCARLET, 10 * (7 - j))));
-  for (int i = 40; i < 54; i++) CHECK(same(img[i], WEATHER_SCARLET));   // the 14 leftmost hot pixels
-  for (int i = 54; i < 60; i++) CHECK(dark(img[i]));
-  for (int i = 34; i <= 39; i++) CHECK(img[i].r > img[i - 1].r);        // more scarlett toward the right edge
-}
-
-static void testCold() {
-  if (!DEFAULT_TUNING) { printf("testCold skipped: non-default bleed tuning\n"); return; }
-  printf("cold day\n");
-  Rgb img[TOP_STRIP_PIXELS], warm[TOP_STRIP_PIXELS];
-  weatherTopImage(true, -7.2f, img);
-  for (int i = 0; i < 6; i++) CHECK(dark(img[i]));        // 14 sky blue pixels in 6..19, growing leftward
-  for (int i = 6; i < 20; i++) CHECK(same(img[i], WEATHER_SKY_BLUE));
-  for (int i = 40; i < 60; i++) CHECK(dark(img[i]));      // the hot group stays dark
-  for (int i = 27; i < 40; i++) CHECK(same(img[i], WEATHER_TYPICAL));
-  for (int j = 0; j < 7; j++)                             // pixel 20 is 70%, 21 is 60%, ... 26 is 10%
-    CHECK(nearRgb(img[20 + j], expected(WEATHER_SKY_BLUE, 10 * (7 - j))));
-  // exact mirror: the same positions and percentages, reflected about the strip's center
-  weatherTopImage(true, 7.2f, warm);
-  for (int i = 0; i < TOP_STRIP_PIXELS; i++) {
-    bool warmLit = !dark(warm[i]) && !same(warm[i], WEATHER_TYPICAL);
-    bool coldLit = !dark(img[TOP_STRIP_PIXELS - 1 - i]) && !same(img[TOP_STRIP_PIXELS - 1 - i], WEATHER_TYPICAL);
-    CHECK(warmLit == coldLit);
-  }
-}
-
-static void testBleedKeepsAdvancing() {
-  printf("bleed keeps advancing\n");
-  Rgb img[TOP_STRIP_PIXELS];
-  if (DEFAULT_TUNING) {
-  weatherTopImage(true, 10.0f, img);                      // 10 degrees: 100% at the edge, 10% ten pixels in
-  CHECK(same(img[39], WEATHER_SCARLET));
-  CHECK(nearRgb(img[30], expected(WEATHER_SCARLET, 10)));
-  CHECK(same(img[29], WEATHER_TYPICAL));
-  weatherTopImage(true, 20.0f, img);                      // 20 degrees: every pixel of the group is shifted
-  for (int i = 20; i < 40; i++) CHECK(!same(img[i], WEATHER_TYPICAL));
-  for (int j = 0; j < 20; j++) {
-    int pct = 10 * (20 - j); if (pct > 100) pct = 100;
-    CHECK(nearRgb(img[39 - j], expected(WEATHER_SCARLET, pct)));
-  }
-  CHECK(same(img[29], WEATHER_SCARLET));                  // pixels 29..39 are fully scarlett
-  weatherTopImage(true, 28.9f, img);                      // not yet: the far pixel is at 90%
-  CHECK(nearRgb(img[20], expected(WEATHER_SCARLET, 90)));
-  weatherTopImage(true, 29.0f, img);                      // from 29 degrees the whole group is fully scarlett
-  for (int i = 20; i < 40; i++) CHECK(same(img[i], WEATHER_SCARLET));
-  weatherTopImage(true, 60.0f, img);
-  for (int i = 20; i < 40; i++) CHECK(same(img[i], WEATHER_SCARLET));
-  weatherTopImage(true, -29.0f, img);                     // and the same with sky blue
-  for (int i = 20; i < 40; i++) CHECK(same(img[i], WEATHER_SKY_BLUE));
-  }
-  // as the deviation grows the shift never decreases anywhere, so the display only moves one way
-  for (int sign = -1; sign <= 1; sign += 2) {
-    Rgb prev[TOP_STRIP_PIXELS];
-    weatherTopImage(true, sign * 0.0f, prev);
-    for (float d = 0.1f; d <= 40.0f; d += 0.1f) {
-      weatherTopImage(true, sign * d, img);
-      const Rgb& target = sign > 0 ? WEATHER_SCARLET : WEATHER_SKY_BLUE;
-      for (int i = 20; i < 40; i++) {
-        int before = abs(prev[i].g - target.g) + abs(prev[i].r - target.r) + abs(prev[i].b - target.b);
-        int after = abs(img[i].g - target.g) + abs(img[i].r - target.r) + abs(img[i].b - target.b);
-        CHECK(after <= before);
-      }
-      for (int i = 0; i < TOP_STRIP_PIXELS; i++) prev[i] = img[i];
+static void testTypicalLows() {
+  printf("typical lows\n");
+  CHECK_NEAR(typicalLowC(1, 1), -3.9, 1e-4);
+  CHECK_NEAR(typicalLowC(4, 23), 6.7, 1e-4);
+  CHECK_NEAR(typicalLowC(7, 20), 19.4, 1e-4);
+  CHECK_NEAR(typicalLowC(11, 12), 3.9, 1e-4);             // the night of Nov 11 is compared with this date
+  CHECK_NEAR(typicalLowC(2, 29), -2.8, 1e-4);             // leap day exists
+  CHECK_NEAR(typicalLowC(12, 29), -3.3, 1e-4);
+  CHECK(isnan(typicalLowC(2, 30)));
+  CHECK(isnan(typicalLowC(4, 31)));
+  CHECK(isnan(typicalLowC(0, 1)));
+  CHECK(isnan(typicalLowC(13, 1)));
+  CHECK(isnan(typicalLowC(1, 0)));
+  for (int m = 1; m <= 12; m++)                           // every valid date resolves, below that day's typical high
+    for (int d = 1; d <= 31; d++) {
+      float lo = typicalLowC(m, d), hi = typicalHighC(m, d);
+      CHECK(isnan(lo) == isnan(hi));
+      if (!isnan(lo)) CHECK(lo > -25.0f && lo < 25.0f && lo < hi);
     }
+}
+
+static void testRollover() {
+  printf("rollover hours\n");
+  CHECK(topDayOffset(0, 17) == 0 && topDayOffset(16, 17) == 0);
+  CHECK(topDayOffset(17, 17) == 1 && topDayOffset(23, 17) == 1);
+  CHECK(topNightOffset(0, 6) == -1 && topNightOffset(5, 6) == -1);       // until 06:00: the night in progress
+  CHECK(topNightOffset(6, 6) == 0 && topNightOffset(23, 6) == 0);        // from 06:00: tonight
+}
+
+static void testBar() {
+  printf("bar length\n");
+  CHECK(barPixelsFor(0.0f) == 0);
+  CHECK(barPixelsFor(0.49f) == 0 && barPixelsFor(-0.49f) == 0);
+  CHECK(barPixelsFor(0.5f) == 1 && barPixelsFor(-0.5f) == -1);
+  CHECK(barPixelsFor(0.99f) == 1 && barPixelsFor(1.0f) == 2);
+  CHECK(barPixelsFor(7.0f) == 14 && barPixelsFor(-7.0f) == -14);          // an exact whole degree is not 13
+  CHECK(barPixelsFor(22.8f - 15.6f) == 14);                              // the doc's example: 7.2 above typical
+  CHECK(barPixelsFor(14.5f) == 29 && barPixelsFor(14.99f) == 29);
+  CHECK(barPixelsFor(15.0f) == 30 && barPixelsFor(-15.0f) == -30);
+  CHECK(barPixelsFor(40.0f) == 30 && barPixelsFor(-40.0f) == -30);        // capped at the half
+  CHECK(barPixelsFor(INFINITY) == 30 && barPixelsFor(-INFINITY) == -30);
+  CHECK(barPixelsFor(NAN) == 0);
+  for (int half = 1; half <= 60; half++) {                               // every half degree, however it rounds
+    float d = half * 0.5f;
+    int want = half > 30 ? 30 : half;
+    CHECK(barPixelsFor(d) == want && barPixelsFor(-d) == -want);
+    CHECK(barPixelsFor(7.2f - 0.2f + (half - 14) * 0.5f) == (half > 30 ? 30 : half));   // accumulated float error
   }
 }
 
-static void testNeverCrossesBlocks() {
-  printf("bleed stays in the temperate group\n");
+static void testNotchBoundary() {
+  printf("notch boundary\n");
+  CHECK(notchBoundaryFor(0.0f) == 30 && notchBoundaryFor(0.4f) == 30 && notchBoundaryFor(-0.4f) == 30);
+  CHECK(notchBoundaryFor(NAN) == 30);
+  CHECK(notchBoundaryFor(-2.3f) == 26);                                  // the doc's example: pixels 25 and 26
+  CHECK(notchBoundaryFor(2.3f) == 34);
+  CHECK(notchBoundaryFor(7.0f) == 44 && notchBoundaryFor(-7.0f) == 16);
+  CHECK(notchBoundaryFor(14.5f) == 59 && notchBoundaryFor(-14.5f) == 1);
+  CHECK(notchBoundaryFor(15.0f) == 59 && notchBoundaryFor(-15.0f) == 1); // clamped: the end pixels
+  CHECK(notchBoundaryFor(80.0f) == 59 && notchBoundaryFor(-80.0f) == 1);
+  CHECK(notchBoundaryFor(INFINITY) == 59 && notchBoundaryFor(-INFINITY) == 1);
+}
+
+// Counts of pixels of each kind in an image.
+static int countOf(const Rgb* img, const Rgb& c) { int n = 0; for (int i = 0; i < TOP_STRIP_PIXELS; i++) n += same(img[i], c); return n; }
+
+static void testImage() {
+  printf("images\n");
   Rgb img[TOP_STRIP_PIXELS];
-  for (float d = 0.0f; d <= 100.0f; d += 0.5f) {
-    weatherTopImage(true, d, img);                        // warm: nothing but scarlett in the hot group, cold group dark
-    for (int i = 0; i < 20; i++) CHECK(dark(img[i]));
-    for (int i = 40; i < 60; i++) CHECK(dark(img[i]) || same(img[i], WEATHER_SCARLET));
-    weatherTopImage(true, -d, img);                       // cold: the hot group dark, nothing but sky blue in the cold group
-    for (int i = 40; i < 60; i++) CHECK(dark(img[i]));
-    for (int i = 0; i < 20; i++) CHECK(dark(img[i]) || same(img[i], WEATHER_SKY_BLUE));
+  weatherTopImage(false, 0, false, 0, img);                              // no high, no low: all background
+  for (int i = 0; i < TOP_STRIP_PIXELS; i++) CHECK(same(img[i], WEATHER_TYPICAL));
+  weatherTopImage(true, 0.3f, false, 0, img);                            // typical high: all background
+  CHECK(countOf(img, WEATHER_TYPICAL) == 60);
+
+  weatherTopImage(true, 7.2f, false, 0, img);                            // warm: pixels 30..43 scarlet
+  for (int i = 0; i < 60; i++) CHECK(same(img[i], (i >= 30 && i <= 43) ? WEATHER_SCARLET : WEATHER_TYPICAL));
+  weatherTopImage(true, -7.2f, false, 0, img);                           // cold: pixels 29 down to 16
+  for (int i = 0; i < 60; i++) CHECK(same(img[i], (i >= 16 && i <= 29) ? WEATHER_SKY_BLUE : WEATHER_TYPICAL));
+  weatherTopImage(true, 20.0f, false, 0, img);                           // the whole warm half, nothing on the cold side
+  for (int i = 0; i < 60; i++) CHECK(same(img[i], i >= 30 ? WEATHER_SCARLET : WEATHER_TYPICAL));
+  weatherTopImage(true, -20.0f, false, 0, img);
+  for (int i = 0; i < 60; i++) CHECK(same(img[i], i < 30 ? WEATHER_SKY_BLUE : WEATHER_TYPICAL));
+  weatherTopImage(true, 0.5f, false, 0, img);                            // one pixel is a bar
+  CHECK(same(img[30], WEATHER_SCARLET) && countOf(img, WEATHER_SCARLET) == 1);
+  weatherTopImage(true, NAN, false, 0, img);                             // an unknown high is no bar
+  CHECK(countOf(img, WEATHER_TYPICAL) == 60);
+
+  // the notch alone
+  weatherTopImage(false, 0, true, 0.0f, img);                            // at the center: pixels 29 and 30
+  for (int i = 0; i < 60; i++) CHECK(dark(img[i]) == (i == 29 || i == 30));
+  weatherTopImage(false, 0, true, -2.3f, img);                           // pixels 25 and 26
+  for (int i = 0; i < 60; i++) CHECK(dark(img[i]) == (i == 25 || i == 26));
+  weatherTopImage(false, 0, true, 15.0f, img);                           // far warm: the end pixels 58 and 59
+  for (int i = 0; i < 60; i++) CHECK(dark(img[i]) == (i == 58 || i == 59));
+  weatherTopImage(false, 0, true, -50.0f, img);                          // far cold: pixels 0 and 1
+  for (int i = 0; i < 60; i++) CHECK(dark(img[i]) == (i == 0 || i == 1));
+  weatherTopImage(true, 7.2f, true, NAN, img);                           // an unknown low is no notch
+  CHECK(countOf(img, Rgb{0, 0, 0}) == 0 && countOf(img, WEATHER_SCARLET) == 14);
+
+  // the notch over the bar: a gap inside it; at its tip; opposite it
+  weatherTopImage(true, 7.2f, true, 2.3f, img);                          // bar 30..43, notch 33 and 34
+  for (int i = 0; i < 60; i++) {
+    if (i == 33 || i == 34) CHECK(dark(img[i]));
+    else CHECK(same(img[i], (i >= 30 && i <= 43) ? WEATHER_SCARLET : WEATHER_TYPICAL));
   }
-  weatherTopImage(true, 1e30f, img);
-  for (int i = 0; i < 20; i++) CHECK(dark(img[i]));
-  for (int i = 20; i < 40; i++) CHECK(same(img[i], WEATHER_SCARLET));
-  for (int i = 40; i < 60; i++) CHECK(same(img[i], WEATHER_SCARLET));
+  weatherTopImage(true, 7.0f, true, 7.0f, img);                          // same deviation: bar 30..43, b = 44 -> 43 and 44 dark
+  CHECK(same(img[42], WEATHER_SCARLET) && dark(img[43]) && dark(img[44]) && same(img[45], WEATHER_TYPICAL));
+  CHECK(countOf(img, WEATHER_SCARLET) == 13);
+  weatherTopImage(true, 7.0f, true, -7.0f, img);                         // warm day, cold night: bar right, notch left
+  CHECK(countOf(img, WEATHER_SCARLET) == 14 && dark(img[15]) && dark(img[16]) && countOf(img, Rgb{0, 0, 0}) == 2);
+  weatherTopImage(true, -7.0f, true, -7.0f, img);                        // cold bar 16..29, b = 16: pixels 15 and 16
+  CHECK(same(img[17], WEATHER_SKY_BLUE) && dark(img[16]) && dark(img[15]) && same(img[14], WEATHER_TYPICAL));
+  weatherTopImage(true, 30.0f, true, 0.0f, img);                         // a notch at the center splits nothing: 29 is background, 30 gap
+  CHECK(dark(img[29]) && dark(img[30]) && same(img[31], WEATHER_SCARLET));
+
+  // always exactly two dark pixels when there is a notch, and never more than the lit-ness rules allow
+  for (int tenth = -400; tenth <= 400; tenth += 7) {
+    float d = tenth / 10.0f;
+    weatherTopImage(true, d * 0.37f, true, d, img);
+    CHECK(countOf(img, Rgb{0, 0, 0}) == 2);
+  }
+}
+
+// The background must read as brighter than black and dimmer than the bars (3.1): luminance about 75% of the bars'.
+static void testColors() {
+  printf("colors\n");
+  double ly = 0.2126 * WEATHER_TYPICAL.r + 0.7152 * WEATHER_TYPICAL.g + 0.0722 * WEATHER_TYPICAL.b;
+  double sc = 0.2126 * WEATHER_SCARLET.r + 0.7152 * WEATHER_SCARLET.g + 0.0722 * WEATHER_SCARLET.b;
+  double sb = 0.2126 * WEATHER_SKY_BLUE.r + 0.7152 * WEATHER_SKY_BLUE.g + 0.0722 * WEATHER_SKY_BLUE.b;
+  CHECK_NEAR(sc, sb, 1.5);
+  CHECK_NEAR(ly / sc, 0.75, 0.05);
+  CHECK(WEATHER_TYPICAL.g > WEATHER_TYPICAL.r && WEATHER_TYPICAL.g > WEATHER_TYPICAL.b);   // faintly green
 }
 
 int main() {
   testTypicalHighs();
-  testShape();
-  testDefaultImage();
-  testWarm();
-  testCold();
-  testBleedKeepsAdvancing();
-  testNeverCrossesBlocks();
+  testTypicalLows();
+  testRollover();
+  testBar();
+  testNotchBoundary();
+  testImage();
+  testColors();
   printf("\n%d checks, %d failed\n", checks, failures);
   return failures ? 1 : 0;
 }
