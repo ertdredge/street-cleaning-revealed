@@ -16,7 +16,7 @@ const int TOP_HALF_PIXELS = TOP_STRIP_PIXELS / 2;   // pixels 0..29 are the cold
 const int TOP_PIXELS_PER_C = 2;                     // scale: one pixel per half degree C
 const int NOTCH_PIXELS = 2;                         // width of the night notch
 
-const Rgb WEATHER_TYPICAL  = {  35,  43,  38 };   // pale green-tinted off-white background, 75% of the bar luminance
+const Rgb WEATHER_TYPICAL  = {  26,  33,  29 };   // pale green-tinted off-white background, lower than the bar luminance
 const Rgb WEATHER_SCARLET  = { 173,  24,   0 };   // warmer than typical
 const Rgb WEATHER_SKY_BLUE = {  38,  58,  66 };   // colder than typical
 

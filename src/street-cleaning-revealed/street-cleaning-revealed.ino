@@ -101,7 +101,7 @@
 const uint32_t FRAME_MS = 10;            // render period (100 fps; faster frames make the temporal dithering finer)
 const float ANIM_PERIOD = 6.0f;          // marching pattern repeats every N pixels
 const float ANIM_LIT = 2.0f;             // ...of which this many are lit
-const uint8_t ANIM_DIM_LEVEL = 96;       // brightness (0..255) of the other pixels; 0 = off
+const uint8_t ANIM_DIM_LEVEL = 75;       // brightness (0..255) of the other pixels; 0 = off
 const float ANIM_MAX_PPS = 20.0f;        // pixels per second at speed +-100
 const int MARCH_THRESHOLD = 55;          // risk above this animates top and bottom
 const int MARCH_MIN_SPEED = 10;          // speed at risk = MARCH_THRESHOLD
@@ -1102,7 +1102,7 @@ void updateFromClock(bool verbose) {
 // through amber to 0 deg red), so nothing on top/bottom reads as parking.
 const CRGB WASTE_COLOR_TRASH    = CRGB(  0,  50, 252);   // azure (hue 228): put the trash out
 const CRGB WASTE_COLOR_YARD     = CRGB(  0,  50, 252);   // azure (hue 228): trash and yard waste, the ants
-const CRGB WASTE_COLOR_YARD_ALT = CRGB(  0,  72,  36);   // spring green (hue 150): yard waste, the background between the ants
+const CRGB WASTE_COLOR_YARD_ALT = CRGB(  0,  58,  29);   // spring green (hue 150): yard waste, the background between the ants
 const CRGB WASTE_COLOR_SKIPPED  = CRGB( 90,  35,  60);   // pink: holiday delay, don't put it out yet
 const CRGB WASTE_COLOR_STANDARD = CRGB( 54,  54,  54);   // white: nothing to put out
 
